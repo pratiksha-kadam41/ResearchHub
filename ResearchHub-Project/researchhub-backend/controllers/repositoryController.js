@@ -2,7 +2,9 @@ const { createHash, randomBytes } = require("node:crypto");
 const nodemailer = require("nodemailer");
 const db = require("../config/db");
 
-const MAX_GROUP_INVITATIONS = 20;
+// The owner plus 3–4 accepted invitations forms the intended 4–5 person group.
+const MIN_GROUP_INVITATIONS = 3;
+const MAX_GROUP_INVITATIONS = 4;
 const INVITATION_VALIDITY_DAYS = 7;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -105,7 +107,7 @@ const createRepository = async (req, res) => {
     typeof domain !== "string" ||
     !domain.trim() ||
     !["individual", "group"].includes(researchType) ||
-    !["private", "shared"].includes(privacy)
+    !["private", "shared", "public"].includes(privacy)
   ) {
     return res.status(400).json({ message: "Please provide valid repository details." });
   }
@@ -140,14 +142,14 @@ const createRepository = async (req, res) => {
 
   if (
     (researchType === "group" &&
-      (normalizedEmails.length === 0 ||
+      (normalizedEmails.length < MIN_GROUP_INVITATIONS ||
         normalizedEmails.length > MAX_GROUP_INVITATIONS)) ||
     (researchType === "individual" && normalizedEmails.length > 0)
   ) {
     return res.status(400).json({
       message:
         researchType === "group"
-          ? `A group repository requires between 1 and ${MAX_GROUP_INVITATIONS} member email addresses.`
+          ? `A group repository requires ${MIN_GROUP_INVITATIONS} to ${MAX_GROUP_INVITATIONS} member email addresses, creating a 4–5 person group including the owner.`
           : "Individual repositories cannot include group invitations.",
     });
   }
@@ -357,24 +359,34 @@ const getRepositories = async (req, res) => {
 };
 
 const getRepository = async (req, res) => {
-  if (!isStudent(req, res)) {
-    return;
-  }
-
   const repositoryId = Number(req.params.repositoryId);
   if (!Number.isSafeInteger(repositoryId) || repositoryId < 1) {
     return res.status(400).json({ message: "Invalid repository ID." });
   }
 
   try {
-    const [repositories] = await db.promise().execute(
-      `SELECT r.id, r.name, r.description, r.domain, r.research_type, r.privacy,
-              r.status, r.owner_id, r.created_at
-       FROM repositories r
-       INNER JOIN repository_members rm ON rm.repository_id = r.id
-       WHERE r.id = ? AND rm.user_id = ?`,
-      [repositoryId, req.user.id],
-    );
+    let repositories;
+    if (req.user.role === "student") {
+      [repositories] = await db.promise().execute(
+        `SELECT r.id, r.name, r.description, r.domain, r.research_type, r.privacy,
+                r.status, r.owner_id, r.created_at
+         FROM repositories r
+         INNER JOIN repository_members rm ON rm.repository_id = r.id
+         WHERE r.id = ? AND rm.user_id = ?`,
+        [repositoryId, req.user.id],
+      );
+    } else if (req.user.role === "faculty") {
+      [repositories] = await db.promise().execute(
+        `SELECT r.id, r.name, r.description, r.domain, r.research_type, r.privacy,
+                r.status, r.owner_id, r.created_at
+         FROM repositories r
+         INNER JOIN mentor_requests mr ON mr.repository_id = r.id
+         WHERE r.id = ? AND mr.faculty_id = ? AND mr.status = 'ACCEPTED'`,
+        [repositoryId, req.user.id],
+      );
+    } else {
+      return res.status(403).json({ message: "You do not have access to this repository." });
+    }
 
     if (repositories.length === 0) {
       return res.status(404).json({
@@ -391,13 +403,16 @@ const getRepository = async (req, res) => {
       [repositoryId],
     );
 
-    const [invitations] = await db.promise().execute(
-      `SELECT id, email, delivery_status, expires_at, created_at
-       FROM repository_invitations
-       WHERE repository_id = ? AND inviter_id = ? AND accepted_at IS NULL
-       ORDER BY created_at DESC`,
-      [repositoryId, req.user.id],
-    );
+    let invitations = [];
+    if (repositories[0].owner_id === req.user.id) {
+      [invitations] = await db.promise().execute(
+        `SELECT id, email, delivery_status, expires_at, created_at
+         FROM repository_invitations
+         WHERE repository_id = ? AND accepted_at IS NULL
+         ORDER BY created_at DESC`,
+        [repositoryId],
+      );
+    }
 
     return res.status(200).json({
       repository: repositories[0],
@@ -407,6 +422,90 @@ const getRepository = async (req, res) => {
   } catch (error) {
     console.error("Repository lookup failed:", error);
     return res.status(500).json({ message: "Unable to load this repository." });
+  }
+};
+
+const updateRepository = async (req, res) => {
+  if (!isStudent(req, res)) return;
+
+  const repositoryId = Number(req.params.repositoryId);
+  if (!Number.isSafeInteger(repositoryId) || repositoryId < 1) {
+    return res.status(400).json({ message: "Invalid repository ID." });
+  }
+  const { name, description, domain, privacy, status } = req.body;
+  if (
+    typeof name !== "string" || !name.trim() || name.trim().length > 150 ||
+    typeof description !== "string" || !description.trim() ||
+    typeof domain !== "string" || !domain.trim() || domain.trim().length > 100 ||
+    !["private", "shared", "public"].includes(privacy) ||
+    !["ongoing", "completed", "archived"].includes(status)
+  ) {
+    return res.status(422).json({ message: "Please provide valid project details." });
+  }
+
+  try {
+    const [result] = await db.promise().execute(
+      `UPDATE repositories
+       SET name = ?, description = ?, domain = ?, privacy = ?, status = ?
+       WHERE id = ? AND owner_id = ?`,
+      [name.trim(), description.trim(), domain.trim(), privacy, status, repositoryId, req.user.id],
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Project not found or you are not its owner." });
+    }
+    return res.status(200).json({ message: "Project updated." });
+  } catch (error) {
+    console.error("Repository update failed:", error);
+    return res.status(500).json({ message: "Unable to update project." });
+  }
+};
+
+const removeRepositoryMember = async (req, res) => {
+  if (!isStudent(req, res)) return;
+
+  const repositoryId = Number(req.params.repositoryId);
+  const memberId = Number(req.params.memberId);
+  if (!Number.isSafeInteger(repositoryId) || repositoryId < 1 || !Number.isSafeInteger(memberId) || memberId < 1) {
+    return res.status(400).json({ message: "Invalid project member." });
+  }
+  try {
+    const [[repository]] = await db.promise().execute(
+      "SELECT owner_id FROM repositories WHERE id = ?",
+      [repositoryId],
+    );
+    if (!repository || repository.owner_id !== req.user.id) {
+      return res.status(403).json({ message: "Only the project owner can remove members." });
+    }
+    if (memberId === req.user.id) {
+      return res.status(409).json({ message: "The project owner cannot be removed." });
+    }
+    const [result] = await db.promise().execute(
+      "DELETE FROM repository_members WHERE repository_id = ? AND user_id = ? AND member_role = 'member'",
+      [repositoryId, memberId],
+    );
+    if (result.affectedRows === 0) return res.status(404).json({ message: "Project member not found." });
+    return res.status(200).json({ message: "Project member removed." });
+  } catch (error) {
+    console.error("Repository member removal failed:", error);
+    return res.status(500).json({ message: "Unable to remove project member." });
+  }
+};
+
+const getPublicRepositories = async (req, res) => {
+  try {
+    const [repositories] = await db.promise().execute(
+      `SELECT r.id, r.name, r.description, r.domain, r.research_type, r.status,
+              u.name AS owner_name, u.institution, r.created_at
+       FROM repositories r
+       INNER JOIN users u ON u.id = r.owner_id
+       WHERE r.privacy = 'public'
+       ORDER BY r.created_at DESC, r.id DESC
+       LIMIT 100`,
+    );
+    return res.status(200).json({ repositories });
+  } catch (error) {
+    console.error("Public repository list failed:", error);
+    return res.status(500).json({ message: "Unable to load public projects." });
   }
 };
 
@@ -770,7 +869,10 @@ module.exports = {
   getRepositoryDocuments,
   getRepositories,
   getRepository,
+  getPublicRepositories,
   generateRepositoryInvitationLink,
+  removeRepositoryMember,
   resendRepositoryInvitation,
   saveRepositoryDocument,
+  updateRepository,
 };

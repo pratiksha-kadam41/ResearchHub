@@ -120,7 +120,7 @@ export default function InviteRepositoryMembers() {
             className="mt-2 w-full resize-y rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-50"
           />
           <p className="mt-2 text-xs text-slate-500">
-            Separate addresses with commas or new lines. You can invite up to 20 people.
+            Separate addresses with commas or new lines. Invite 3–4 people; with you, the group will have 4–5 members.
           </p>
 
           {error && (

@@ -143,6 +143,14 @@ const createStudentProfile = (req, res) => {
     });
   }
 
+  if (!/[0-9]{10,15}/.test(String(phone)) || !["male", "female", "other"].includes(gender)) {
+    return res.status(422).json({ message: "Please provide a valid phone number and gender." });
+  }
+
+  if (Number.isNaN(Date.parse(date_of_birth)) || new Date(date_of_birth) > new Date()) {
+    return res.status(422).json({ message: "Please provide a valid date of birth." });
+  }
+
   // ---------------------------------------------
   // Check whether profile already exists
   // ---------------------------------------------
@@ -266,6 +274,10 @@ const updateStudentProfile = (req, res) => {
     return res.status(400).json({
       message: "Please fill all required profile information.",
     });
+  }
+
+  if (!/[0-9]{10,15}/.test(String(phone)) || Number.isNaN(Date.parse(date_of_birth))) {
+    return res.status(422).json({ message: "Please provide a valid phone number and date of birth." });
   }
 
   // ---------------------------------------------

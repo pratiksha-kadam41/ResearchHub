@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const { getJwtSecret } = require("../config/security");
 
 const authMiddleware = (req, res, next) => {
   // ==========================================
@@ -32,10 +33,7 @@ const authMiddleware = (req, res, next) => {
   // ==========================================
 
   try {
-    const decoded = jwt.verify(
-      token,
-      process.env.JWT_SECRET || "researchhub_secret_key",
-    );
+    const decoded = jwt.verify(token, getJwtSecret());
 
     // ==========================================
     // 4. Store decoded user information
@@ -49,7 +47,12 @@ const authMiddleware = (req, res, next) => {
 
     next();
   } catch (error) {
-    console.error("JWT verification failed:", error);
+    if (error.code === "AUTH_CONFIGURATION_ERROR") {
+      console.error("Authentication configuration error:", error.message);
+      return res.status(500).json({
+        message: "Authentication is not configured on this server.",
+      });
+    }
 
     return res.status(401).json({
       message: "Invalid or expired authentication token",

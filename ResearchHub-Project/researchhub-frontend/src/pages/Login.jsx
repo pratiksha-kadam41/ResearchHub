@@ -103,7 +103,7 @@ export const Login = () => {
       let result = {};
       try {
         result = text ? JSON.parse(text) : {};
-      } catch (parseError) {
+      } catch {
         console.error("Invalid JSON from server:", text);
         throw new Error("The server returned an invalid response. Please make sure the backend is running.");
       }

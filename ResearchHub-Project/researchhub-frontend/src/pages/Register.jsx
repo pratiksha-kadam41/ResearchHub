@@ -13,10 +13,6 @@ import {
   Link,
 } from "react-router-dom";
 import {
-  useAuth,
-} from "../context/AuthContext";
-
-import {
   BookOpen,
   Mail,
   Lock,
@@ -76,9 +72,9 @@ const baseSchema = {
 
   password: z
     .string()
-    .min(6, {
+    .min(8, {
       message:
-        "Password must be at least 6 characters",
+        "Password must be at least 8 characters",
     }),
 
   institution: z
@@ -121,8 +117,6 @@ export const Register = () => {
 
   const [registerError, setRegisterError] =
     useState("");
-
-  const { login } = useAuth();
 
   const navigate = useNavigate();
 
@@ -199,7 +193,7 @@ export const Register = () => {
       let result = {};
       try {
         result = text ? JSON.parse(text) : {};
-      } catch (parseError) {
+      } catch {
         console.error("Invalid JSON from server:", text);
         throw new Error("The server returned an invalid response. Please make sure the backend is running.");
       }
@@ -211,21 +205,7 @@ export const Register = () => {
         );
       }
 
-      // Create user object using the ID returned by backend
-      const newUser = {
-        id: result.userId,
-        name: data.name,
-        email: data.email,
-        role: role,
-        institution: data.institution,
-        course:
-          role === "student"
-            ? data.course
-            : null,
-      };
-
-      // Save user in authentication context
-      // Redirect to login so user signs in properly
+      // Redirect to login so the user signs in with the new account.
       navigate("/login");
 
     } catch (error) {
