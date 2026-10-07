@@ -1,0 +1,21 @@
+1. I have to mark that task is completed how many percent
+
+2. Asset library must be stored
+
+3. Miestone create --> As per milestone the percent is created for the perticular paper
+
+4. As per deadline the marks will be minus if there is extend in the paper deadline 
+
+5. In use case add milestone related feature like many milestones are completed and all that 
+
+6. As per MCA and MBA their need to be a partations 
+
+
+7. Task completed/created/update/delete in usecase
+
+8. notification related data in the usecase 
+
+9. dashboard related data in usecase 
+
+
+

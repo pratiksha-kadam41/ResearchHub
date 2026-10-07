@@ -1,0 +1,8 @@
+{
+  "name": "researchhub-workspace",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix ./ResearchHub-Project/researchhub-frontend run dev --",
+    "start": "node server.js"
+  }
+}

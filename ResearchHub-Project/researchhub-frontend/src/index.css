@@ -1,0 +1,19 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-serif: "Libre Baskerville", serif;
+  --font-sans: "Inter", sans-serif;
+  
+  --color-oxford: #0B2027;
+  --color-parchment: #F7F6F1;
+  --color-slate-muted: #596869;
+  --color-student: #2A7276;
+  --color-faculty: #7A2833;
+}
+
+@layer base {
+  body {
+    @apply bg-parchment text-oxford font-sans antialiased;
+  }
+}
