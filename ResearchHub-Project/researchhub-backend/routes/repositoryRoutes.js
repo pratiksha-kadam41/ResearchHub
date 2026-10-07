@@ -6,15 +6,19 @@ const {
   getRepositoryDocuments,
   getRepositories,
   getRepository,
+  getPublicRepositories,
   generateRepositoryInvitationLink,
   resendRepositoryInvitation,
+  removeRepositoryMember,
   saveRepositoryDocument,
+  updateRepository,
 } = require("../controllers/repositoryController");
 
 const router = express.Router();
 
 router.post("/", authMiddleware, createRepository);
 router.get("/", authMiddleware, getRepositories);
+router.get("/public", authMiddleware, getPublicRepositories);
 router.get("/:repositoryId/documents", authMiddleware, getRepositoryDocuments);
 router.post("/:repositoryId/documents", authMiddleware, saveRepositoryDocument);
 router.put(
@@ -23,6 +27,8 @@ router.put(
   saveRepositoryDocument,
 );
 router.get("/:repositoryId", authMiddleware, getRepository);
+router.patch("/:repositoryId", authMiddleware, updateRepository);
+router.delete("/:repositoryId/members/:memberId", authMiddleware, removeRepositoryMember);
 router.post(
   "/:repositoryId/invitations/:invitationId/link",
   authMiddleware,

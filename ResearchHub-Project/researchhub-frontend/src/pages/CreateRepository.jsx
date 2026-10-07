@@ -5,6 +5,7 @@ import {
   BookOpen,
   Check,
   FolderGit2,
+  Globe2,
   Lock,
   LoaderCircle,
   Users,
@@ -352,7 +353,6 @@ export default function CreateRepository() {
 
               </button>
 
-
               {/* GROUP */}
 
               <button
@@ -478,6 +478,40 @@ export default function CreateRepository() {
 
                 <p className="mt-1 text-xs leading-5 text-slate-500">
                   Shared with selected collaborators.
+                </p>
+
+              </button>
+
+
+              {/* PUBLIC */}
+
+              <button
+                type="button"
+                onClick={() =>
+                  handleChange("privacy", "public")
+                }
+                className={`rounded-2xl border p-4 text-left transition ${
+                  form.privacy === "public"
+                    ? "border-blue-400 bg-blue-50/70 ring-2 ring-blue-100"
+                    : "border-slate-200 hover:border-slate-300"
+                }`}
+              >
+
+                <Globe2
+                  size={19}
+                  className={
+                    form.privacy === "public"
+                      ? "text-blue-600"
+                      : "text-slate-500"
+                  }
+                />
+
+                <p className="mt-3 text-sm font-bold text-slate-800">
+                  Public
+                </p>
+
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  Intended for work you are ready to share publicly.
                 </p>
 
               </button>
