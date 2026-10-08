@@ -7,6 +7,11 @@ Create the existing `researchhub` database and its `users`, `repositories`, and
 [`database/researchhub_group_repositories.sql`](./database/researchhub_group_repositories.sql)
 in MySQL Workbench or the MySQL command-line client. The script adds repository
 membership and invitation tables and registers the existing repository owners.
+For an existing installation, run
+[`database/researchhub_invitation_responses.sql`](./database/researchhub_invitation_responses.sql)
+once to add accepted/rejected invitation statuses, and run
+[`database/researchhub_mentor_rejection_reason.sql`](./database/researchhub_mentor_rejection_reason.sql)
+once to store faculty rejection feedback for guidance requests.
 
 ## Email invitations
 
@@ -32,7 +37,11 @@ and shared manually from the repository workspace. The workspace can also
 generate a fresh link for pending invitations. When SMTP is configured, failed
 email delivery can be retried from that workspace.
 Invitation links expire after seven days and can only be accepted by a student
-account whose email matches the invitation.
+account whose email matches the invitation. If the invitee does not have an
+account yet, opening the email link takes them through student registration and
+sign-in. Accept and reject links open a confirmation page; invitation links do
+not change status until the invitee confirms the choice. Rejection does not
+require an account, while acceptance requires the invited student account.
 
 Repository members can also create and edit shared research notes in the
 repository workspace. Only authenticated student members of that repository

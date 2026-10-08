@@ -70,8 +70,14 @@ const getMentorRequests = async (req, res) => {
     let requests;
     if (req.user.role === "faculty") {
       [requests] = await db.promise().execute(
-        `SELECT mr.id, mr.status, mr.message, mr.created_at, mr.responded_at,
-                r.id AS repository_id, r.name AS repository_name, r.domain,
+        `SELECT mr.id, mr.status, mr.message, mr.rejection_reason,
+                mr.created_at, mr.responded_at,
+                r.id AS repository_id, r.name AS repository_name,
+                r.description AS research_topic, r.domain,
+                (SELECT GROUP_CONCAT(DISTINCT student.name ORDER BY student.name SEPARATOR '\n')
+                 FROM repository_members rm
+                 INNER JOIN users student ON student.id = rm.user_id AND student.role = 'student'
+                 WHERE rm.repository_id = r.id) AS student_names,
                 u.id AS requester_id, u.name AS requester_name, u.email AS requester_email
          FROM mentor_requests mr
          INNER JOIN repositories r ON r.id = mr.repository_id
@@ -82,7 +88,8 @@ const getMentorRequests = async (req, res) => {
       );
     } else {
       [requests] = await db.promise().execute(
-        `SELECT mr.id, mr.status, mr.message, mr.created_at, mr.responded_at,
+        `SELECT mr.id, mr.status, mr.message, mr.rejection_reason,
+                mr.created_at, mr.responded_at,
                 r.id AS repository_id, r.name AS repository_name, r.domain,
                 f.id AS faculty_id, f.name AS faculty_name, fp.designation
          FROM repository_members rm
@@ -106,8 +113,16 @@ const getMentorRequests = async (req, res) => {
 const updateMentorRequest = async (req, res) => {
   const requestId = parsePositiveId(req.params.requestId);
   const status = typeof req.body.status === "string" ? req.body.status.toUpperCase() : "";
+  const rejectionReason = typeof req.body.rejectionReason === "string"
+    ? req.body.rejectionReason.trim()
+    : "";
   if (!requestId || !["ACCEPTED", "REJECTED", "CANCELLED"].includes(status)) {
     return res.status(422).json({ message: "Please provide a valid request status." });
+  }
+  if (status === "REJECTED" && (!rejectionReason || rejectionReason.length > 2000)) {
+    return res.status(422).json({
+      message: "Please provide a rejection reason (up to 2,000 characters).",
+    });
   }
 
   const connection = await db.promise().getConnection();
@@ -157,15 +172,19 @@ const updateMentorRequest = async (req, res) => {
     }
 
     await connection.execute(
-      "UPDATE mentor_requests SET status = ?, responded_at = UTC_TIMESTAMP() WHERE id = ?",
-      [status, requestId],
+      `UPDATE mentor_requests
+       SET status = ?, rejection_reason = ?, responded_at = UTC_TIMESTAMP()
+       WHERE id = ?`,
+      [status, status === "REJECTED" ? rejectionReason : null, requestId],
     );
 
     const memberIds = await getRepositoryMemberIds(request.repository_id, connection);
     await createNotifications(memberIds, {
       type: "MENTOR_REQUEST_UPDATED",
       title: "Guidance request updated",
-      message: `${request.repository_name}: your guidance request was ${status.toLowerCase()}.`,
+      message: status === "REJECTED"
+        ? `${request.repository_name}: your guidance request was rejected. Reason: ${rejectionReason}`
+        : `${request.repository_name}: your guidance request was ${status.toLowerCase()}.`,
       linkUrl: `/repository/${request.repository_id}`,
     }, connection);
     await connection.commit();

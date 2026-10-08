@@ -10,6 +10,7 @@ import {
 } from "@hookform/resolvers/zod";
 import {
   useNavigate,
+  useLocation,
   Link,
 } from "react-router-dom";
 import {
@@ -57,6 +58,7 @@ export const Login = () => {
 
   const { login } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [showPassword, setShowPassword] = useState(false);
   const [selectedRole, setSelectedRole] = useState("student");
@@ -69,6 +71,9 @@ export const Login = () => {
     formState: { errors },
   } = useForm({
     resolver: zodResolver(loginSchema),
+    defaultValues: {
+      email: location.state?.invitedEmail || "",
+    },
   });
 
 
@@ -130,8 +135,17 @@ export const Login = () => {
       // Save authenticated user in AuthContext
       login(result.user, result.token);
 
-      // Redirect according to the user's actual role
-      if (result.user.role === "faculty") {
+      const returnTo = location.state?.returnTo;
+      const invitationPath =
+        typeof returnTo === "string" &&
+        /^\/invitations\/(?:accept\/[a-f\d]{64}|respond\/[a-f\d]{64}\/accept)$/i.test(returnTo)
+          ? returnTo
+          : null;
+
+      // Return invitees to the invitation link after signing in.
+      if (invitationPath) {
+        navigate(invitationPath, { replace: true });
+      } else if (result.user.role === "faculty") {
         navigate("/dashboard/faculty");
       } else {
         navigate("/dashboard/student");

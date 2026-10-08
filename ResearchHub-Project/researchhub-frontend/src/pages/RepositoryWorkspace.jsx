@@ -7,6 +7,7 @@ import {
   Copy,
   FileText,
   FolderGit2,
+  Handshake,
   LoaderCircle,
   LockKeyhole,
   Mail,
@@ -122,71 +123,20 @@ export default function RepositoryWorkspace() {
   const loadWorkspaceData = useCallback(async () => {
     if (!token) return;
     const headers = { Authorization: `Bearer ${token}` };
+    const isStudent = user?.role?.toLowerCase() === "student";
+    const [workspaceResponse, documentsResponse, mentorRequestsResponse] = await Promise.all([
+      fetch(`/api/repositories/${repositoryId}`, { headers }),
+      fetch(`/api/repositories/${repositoryId}/documents`, { headers }),
+      ...(isStudent ? [fetch("/api/mentor-requests", { headers })] : []),
+    ]);
+    const [workspaceResult, documentsResult, mentorRequestsResult] = await Promise.all([
+      workspaceResponse.json(),
+      documentsResponse.json(),
+      ...(isStudent ? [mentorRequestsResponse.json()] : []),
+    ]);
 
-    try {
-      setLoading(true);
-      setError("");
-
-      const [repoRes, docsRes, msRes, taskRes, subRes, evalRes, resRes, commRes, reqRes] =
-        await Promise.all([
-          fetch(`/api/repositories/${repositoryId}`, { headers }),
-          fetch(`/api/repositories/${repositoryId}/documents`, { headers }),
-          fetch(`/api/milestones/repository/${repositoryId}`, { headers }),
-          fetch(`/api/tasks/repository/${repositoryId}`, { headers }),
-          fetch(`/api/submissions/repository/${repositoryId}`, { headers }),
-          fetch(`/api/submissions/evaluations/repository/${repositoryId}`, { headers }),
-          fetch(`/api/resources/repository/${repositoryId}`, { headers }),
-          fetch(`/api/collaboration/repository/${repositoryId}`, { headers }),
-          fetch("/api/mentor-requests", { headers }),
-        ]);
-
-      if (!repoRes.ok) {
-        const repoData = await repoRes.json();
-        throw new Error(repoData.message || "Unable to load repository.");
-      }
-
-      const repoData = await repoRes.json();
-      setWorkspace(repoData);
-
-      if (docsRes.ok) {
-        const docsData = await docsRes.json();
-        setDocuments(docsData.documents || []);
-      }
-      if (msRes.ok) {
-        const msData = await msRes.json();
-        setMilestones(msData.milestones || []);
-      }
-      if (taskRes.ok) {
-        const taskData = await taskRes.json();
-        setTasks(taskData.tasks || []);
-      }
-      if (subRes.ok) {
-        const subData = await subRes.json();
-        setSubmissions(subData.submissions || []);
-      }
-      if (evalRes.ok) {
-        const evalData = await evalRes.json();
-        setEvaluations(evalData.evaluations || []);
-      }
-      if (resRes.ok) {
-        const resData = await resRes.json();
-        setResources(resData.resources || []);
-      }
-      if (commRes.ok) {
-        const commData = await commRes.json();
-        setComments(commData.comments || []);
-      }
-      if (reqRes.ok) {
-        const reqData = await reqRes.json();
-        const relevantReqs = (reqData.requests || []).filter(
-          (r) => String(r.repository_id) === String(repositoryId)
-        );
-        setMentorRequests(relevantReqs);
-      }
-    } catch (err) {
-      setError(err.message || "Failed to load project workspace.");
-    } finally {
-      setLoading(false);
+    if (!workspaceResponse.ok) {
+      throw new Error(workspaceResult.message || "Unable to load this repository.");
     }
   }, [repositoryId, token]);
 
@@ -221,22 +171,27 @@ export default function RepositoryWorkspace() {
     } catch (err) {
       alert(err.message);
     }
-  };
-
-  const handleDeleteMilestone = async (id) => {
-    if (!confirm("Are you sure you want to delete this milestone? Associated tasks will be deleted.")) return;
-    try {
-      const res = await fetch(`/api/milestones/${id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Failed to delete milestone.");
-      loadWorkspaceData();
-    } catch (err) {
-      alert(err.message);
+    if (isStudent && !mentorRequestsResponse.ok) {
+      throw new Error(mentorRequestsResult.message || "Unable to load faculty collaboration status.");
     }
-  };
+
+    const repositoryGuidanceRequests = isStudent
+      ? (mentorRequestsResult.requests || [])
+        .filter((request) => Number(request.repository_id) === Number(repositoryId))
+        .map((request) => ({
+          id: request.id,
+          status: request.status,
+          rejection_reason: request.rejection_reason,
+          responded_at: request.responded_at,
+          faculty_name: request.faculty_name,
+        }))
+      : workspaceResult.guidanceRequests || [];
+
+    return {
+      workspace: { ...workspaceResult, guidanceRequests: repositoryGuidanceRequests },
+      documents: documentsResult.documents,
+    };
+  }, [repositoryId, token, user?.role]);
 
   const handleUpdateMilestoneProgress = async (id, percentage) => {
     try {
@@ -288,171 +243,52 @@ export default function RepositoryWorkspace() {
     }
   };
 
-  // -------------------------------------------------------------
-  // Task Handlers
-  // -------------------------------------------------------------
-  const handleSaveTask = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await fetch(`/api/tasks/milestone/${taskForm.milestoneId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          title: taskForm.title,
-          description: taskForm.description,
-          priority: taskForm.priority,
-          deadline: taskForm.deadline,
-          assignedTo: taskForm.assignedTo ? Number(taskForm.assignedTo) : null,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Failed to create task.");
-      setTaskModalOpen(false);
-      setTaskForm({ milestoneId: "", title: "", description: "", priority: "MEDIUM", deadline: "", assignedTo: "" });
-      setNotice("Task created and assigned.");
-      loadWorkspaceData();
-    } catch (err) {
-      alert(err.message);
-    }
-  };
+  React.useEffect(() => {
+    const refreshWhenVisible = async () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
 
-  const handleDeleteTask = async (id) => {
-    if (!confirm("Are you sure you want to delete this task?")) return;
-    try {
-      const res = await fetch(`/api/tasks/${id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Failed to delete task.");
-      loadWorkspaceData();
-    } catch (err) {
-      alert(err.message);
-    }
-  };
+      try {
+        const response = await fetch(`/api/repositories/${repositoryId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const result = await response.json();
 
-  const handleUpdateTaskStatus = async (task, newStatus) => {
-    try {
-      const progress = newStatus === "COMPLETED" ? 100 : newStatus === "IN_PROGRESS" ? 50 : 0;
-      const res = await fetch(`/api/tasks/${task.id}/progress`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ status: newStatus, progressPercentage: progress }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Failed to update task.");
-      loadWorkspaceData();
-    } catch (err) {
-      alert(err.message);
-    }
-  };
+        if (!response.ok) {
+          throw new Error(
+            result.message || "Unable to refresh repository status.",
+          );
+        }
 
-  // -------------------------------------------------------------
-  // Submission & Review Handlers
-  // -------------------------------------------------------------
-  const handleSubmitWork = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await fetch(`/api/submissions/milestone/${submittingMilestone.id}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(submissionForm),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Failed to submit work.");
-      setSubmissionModalOpen(false);
-      setSubmittingMilestone(null);
-      setSubmissionForm({ workUrl: "", notes: "" });
-      setNotice(data.message || "Milestone work submitted for review.");
-      loadWorkspaceData();
-    } catch (err) {
-      alert(err.message);
-    }
-  };
+        setWorkspace((current) => ({
+          ...result,
+          guidanceRequests: result.guidanceRequests ?? current?.guidanceRequests ?? [],
+        }));
+      } catch (requestError) {
+        console.error("Repository status refresh failed:", requestError);
+        setError(
+          requestError.message || "Unable to refresh repository status.",
+        );
+      }
+    };
+    const refreshInterval = window.setInterval(refreshWhenVisible, 15000);
 
-  const handleReviewSubmission = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await fetch(`/api/submissions/${reviewingSubmission.id}/review`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(reviewForm),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Failed to record review.");
-      setReviewModalOpen(false);
-      setReviewingSubmission(null);
-      setNotice("Review recorded successfully.");
-      loadWorkspaceData();
-    } catch (err) {
-      alert(err.message);
-    }
-  };
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
 
-  // -------------------------------------------------------------
-  // Evaluation Handlers
-  // -------------------------------------------------------------
-  const handleSaveEvaluation = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await fetch("/api/submissions/evaluations", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          repositoryId,
-          studentId: evalForm.studentId,
-          milestoneId: evalForm.milestoneId || null,
-          originalMarks: evalForm.originalMarks,
-          deductedMarks: evalForm.deductedMarks || 0,
-          deductionReason: evalForm.deductionReason,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Failed to record marks.");
-      setEvalModalOpen(false);
-      setEvalForm({ studentId: "", milestoneId: "", originalMarks: "", deductedMarks: "0", deductionReason: "" });
-      setNotice(`Evaluation recorded. Final Marks: ${data.finalMarks}`);
-      loadWorkspaceData();
-    } catch (err) {
-      alert(err.message);
-    }
-  };
+    return () => {
+      window.clearInterval(refreshInterval);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [repositoryId, token]);
 
-  // -------------------------------------------------------------
-  // Resource Handlers
-  // -------------------------------------------------------------
-  const handleSaveResource = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await fetch("/api/resources", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ...resourceForm, repositoryId }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Failed to save resource.");
-      setResourceModalOpen(false);
-      setResourceForm({ title: "", resourceType: "LINK", resourceUrl: "", notes: "", visibility: "PROJECT" });
-      setNotice("Resource added to repository.");
-      loadWorkspaceData();
-    } catch (err) {
-      alert(err.message);
-    }
-  };
-
-  const handleDeleteResource = async (id) => {
-    if (!confirm("Delete this research resource?")) return;
-    try {
-      const res = await fetch(`/api/resources/${id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error("Failed to delete resource.");
-      loadWorkspaceData();
-    } catch (err) {
-      alert(err.message);
-    }
-  };
+  const saveDocument = async (event) => {
+    event.preventDefault();
+    setSavingDocument(true);
+    setError("");
+    setNotice("");
 
   // -------------------------------------------------------------
   // Discussion / Comments Handlers
@@ -783,13 +619,81 @@ export default function RepositoryWorkspace() {
                   </div>
                 </div>
 
-                {/* Invitations Sidebar (Owner only) */}
-                <div className="space-y-6">
-                  {isOwner && repo?.research_type === "group" && (
-                    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                      <h3 className="font-bold text-[#102A63] text-base">Pending Invitations ({invitations.length})</h3>
-                      <p className="text-xs text-slate-500 mt-1">
-                        Invited students can join by clicking their secure link.
+            {user?.role?.toLowerCase() === "student" && (
+              <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-blue-700">
+                      <Handshake size={15} /> Faculty collaboration
+                    </p>
+                    <h2 className="mt-1 text-lg font-bold text-[#102A63]">Guidance requests for this repository</h2>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Request a faculty collaborator specifically for this research project.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => navigate("/find-mentor", { state: { repositoryId: workspace.repository.id } })}
+                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#0B285F] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#123C83]"
+                  >
+                    <Handshake size={16} />
+                    Request collaboration
+                  </button>
+                </div>
+
+                {workspace.guidanceRequests?.length > 0 ? (
+                  <div className="mt-4 space-y-2">
+                    {workspace.guidanceRequests.map((request) => (
+                      <article key={request.id} className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-sm font-semibold text-slate-800">
+                            {request.status === "ACCEPTED" ? "Faculty collaborator: " : "Request to: "}
+                            {request.faculty_name}
+                          </p>
+                          <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${
+                            request.status === "ACCEPTED"
+                              ? "bg-emerald-100 text-emerald-700"
+                              : request.status === "REJECTED"
+                                ? "bg-red-100 text-red-700"
+                                : request.status === "PENDING"
+                                  ? "bg-amber-100 text-amber-700"
+                                  : "bg-slate-200 text-slate-600"
+                          }`}>
+                            {request.status.toLowerCase()}
+                          </span>
+                        </div>
+                        {request.status === "REJECTED" && request.rejection_reason && (
+                          <p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-red-700">
+                            Reason: {request.rejection_reason}
+                          </p>
+                        )}
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-4 rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                    No faculty collaboration request has been sent for this repository.
+                  </p>
+                )}
+              </section>
+            )}
+
+            <div className="mt-6 grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+              <section className="overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-sm">
+                <div className="border-b border-slate-100 px-5 py-5 sm:px-7">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <div className="flex items-center gap-2 text-blue-600">
+                        <Sparkles size={17} />
+                        <span className="text-[10px] font-bold uppercase tracking-[0.16em]">
+                          Collaborate
+                        </span>
+                      </div>
+                      <h2 className="mt-2 text-lg font-bold text-[#102A63]">
+                        Shared research notes
+                      </h2>
+                      <p className="mt-1 text-sm leading-6 text-slate-500">
+                        Capture ideas and keep the team’s research in one place.
                       </p>
 
                       {invitations.length === 0 ? (
@@ -1550,55 +1454,174 @@ export default function RepositoryWorkspace() {
                             : "border-slate-100 bg-slate-50 hover:bg-white"
                         }`}
                       >
-                        <p className="font-bold text-slate-800 truncate">{doc.title}</p>
-                        <p className="text-[10px] text-slate-400 mt-0.5">
-                          Updated by {doc.updated_by_name}
+                        <span
+                          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${
+                            index === 0
+                              ? "bg-[#0B285F] text-white"
+                              : "bg-blue-50 text-blue-700"
+                          }`}
+                        >
+                          {member.name
+                            .split(/\s+/)
+                            .map((part) => part[0])
+                            .slice(0, 2)
+                            .join("")
+                            .toUpperCase()}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-semibold text-slate-800">
+                            {member.name}
+                            {member.id === user?.id ? " (you)" : ""}
+                          </span>
+                          <span className="block truncate text-xs text-slate-500">
+                            {member.email}
+                          </span>
+                        </span>
+                        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold capitalize text-slate-600">
+                          {member.member_role}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+
+                {workspace.invitations.length > 0 && (
+                  <section className="rounded-3xl border border-slate-200/80 bg-white p-5 shadow-sm sm:p-6">
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
+                        <Mail size={18} />
+                      </span>
+                      <div>
+                        <h2 className="font-bold text-[#102A63]">
+                          Invitations
+                        </h2>
+                        <p className="text-xs text-slate-500">
+                          Accepted, pending, and declined responses
                         </p>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                  <h3 className="font-bold text-[#102A63] text-base mb-4">
-                    {editingDocument ? "Edit Note" : "Create New Shared Research Note"}
-                  </h3>
-                  <form onSubmit={handleSaveDocument} className="space-y-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">Title</label>
-                      <input
-                        type="text"
-                        value={documentTitle}
-                        onChange={(e) => setDocumentTitle(e.target.value)}
-                        placeholder="e.g. Literature Review Summary, Experiment 1 Protocol"
-                        className="w-full rounded-xl border border-slate-200 p-2.5 text-xs outline-none focus:border-blue-500"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">Content</label>
-                      <textarea
-                        rows={12}
-                        value={documentContent}
-                        onChange={(e) => setDocumentContent(e.target.value)}
-                        placeholder="Write your research notes, meeting summaries, or hypothesis..."
-                        className="w-full rounded-xl border border-slate-200 p-3 text-xs outline-none focus:border-blue-500 font-mono"
-                        required
-                      />
-                    </div>
-                    <div className="flex justify-end gap-2">
-                      <button
-                        type="submit"
-                        disabled={savingDocument}
-                        className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50 transition"
-                      >
-                        {savingDocument ? "Saving..." : "Save Research Note"}
-                      </button>
-                    </div>
-                  </form>
-                </div>
-              </div>
-            )}
+                    <ul className="mt-4 space-y-3">
+                      {workspace.invitations.map((invitation) => (
+                        <li
+                          key={invitation.id}
+                          className="rounded-2xl border border-slate-100 bg-slate-50/70 p-3"
+                        >
+                          <p className="break-all text-xs font-semibold text-slate-800">
+                            {invitation.email}
+                          </p>
+                          <p
+                            className={`mt-1 text-[11px] font-semibold ${
+                              invitation.response_status === "accepted"
+                                ? "text-emerald-700"
+                                : invitation.response_status === "rejected"
+                                  ? "text-slate-600"
+                                  : "text-amber-700"
+                            }`}
+                          >
+                            Status:{" "}
+                            {invitation.response_status === "accepted"
+                              ? "Accepted"
+                              : invitation.response_status === "rejected"
+                                ? "Rejected"
+                                : "Pending"}
+                          </p>
+                          {invitation.response_status === "pending" && (
+                            <p className="mt-1 text-[11px] capitalize text-slate-500">
+                              {invitation.delivery_status === "sent"
+                                ? "Invitation email sent"
+                                : invitation.delivery_status === "failed"
+                                  ? "Invitation email delivery failed"
+                                  : "Invitation email not sent yet"}
+                            </p>
+                          )}
+                          {isOwner && invitation.response_status !== "accepted" && (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                disabled={generatingLink === invitation.id}
+                                onClick={() =>
+                                  generateInvitationLink(
+                                    invitation.id,
+                                    invitation.email,
+                                  )
+                                }
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[11px] font-bold text-slate-700 transition hover:border-blue-200 hover:text-blue-700 disabled:opacity-60"
+                              >
+                                {generatingLink === invitation.id ? (
+                                  <LoaderCircle size={13} className="animate-spin" />
+                                ) : (
+                                  <Mail size={13} />
+                                )}
+                                {invitation.response_status === "rejected"
+                                  ? "Invite again with link"
+                                  : "Generate link"}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={resending === invitation.id}
+                                onClick={() => resendInvitation(invitation.id)}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[11px] font-bold text-slate-700 transition hover:border-blue-200 hover:text-blue-700 disabled:opacity-60"
+                              >
+                                {resending === invitation.id ? (
+                                  <LoaderCircle size={13} className="animate-spin" />
+                                ) : (
+                                  <RefreshCw size={13} />
+                                )}
+                                {invitation.response_status === "rejected"
+                                  ? "Invite again by email"
+                                  : invitation.delivery_status === "sent"
+                                    ? "Resend email"
+                                    : "Send email"}
+                              </button>
+                            </div>
+                          )}
+                          {invitation.response_status === "pending" &&
+                            invitationLinks[invitation.email] && (
+                            <div className="mt-3">
+                              <p className="mb-1.5 text-[11px] text-slate-500">
+                                Share with this invitee:
+                              </p>
+                              <input
+                                readOnly
+                                aria-label={`Invitation link for ${invitation.email}`}
+                                value={invitationLinks[invitation.email]}
+                                onFocus={(event) => event.target.select()}
+                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-700"
+                              />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  copyInvitationLink(
+                                    invitation.email,
+                                    invitationLinks[invitation.email],
+                                  )
+                                }
+                                className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 transition hover:bg-blue-100"
+                              >
+                                {copiedEmail === invitation.email ? (
+                                  <Check size={14} />
+                                ) : (
+                                  <Copy size={14} />
+                                )}
+                                {copiedEmail === invitation.email
+                                  ? "Copied to clipboard"
+                                  : "Copy invitation link"}
+                              </button>
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-4 text-[11px] leading-5 text-slate-500">
+                      Invitation links expire 7 days after they are generated.
+                    </p>
+                  </section>
+                )}
+              </aside>
+            </div>
           </>
         )}
       </main>

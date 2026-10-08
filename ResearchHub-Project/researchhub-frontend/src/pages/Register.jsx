@@ -10,6 +10,7 @@ import {
 } from "@hookform/resolvers/zod";
 import {
   useNavigate,
+  useLocation,
   Link,
 } from "react-router-dom";
 import {
@@ -119,6 +120,7 @@ export const Register = () => {
     useState("");
 
   const navigate = useNavigate();
+  const location = useLocation();
 
 
   const schema =
@@ -134,6 +136,9 @@ export const Register = () => {
     formState: { errors },
   } = useForm({
     resolver: zodResolver(schema),
+    defaultValues: {
+      email: location.state?.invitedEmail || "",
+    },
   });
 
 
@@ -206,7 +211,12 @@ export const Register = () => {
       }
 
       // Redirect to login so the user signs in with the new account.
-      navigate("/login");
+      navigate("/login", {
+        state: {
+          returnTo: location.state?.returnTo,
+          invitedEmail: location.state?.invitedEmail,
+        },
+      });
 
     } catch (error) {
 
@@ -1168,12 +1178,9 @@ export const Register = () => {
           ================================================= */}
 
           <div
-            className="
-              grid
-              grid-cols-2
-              gap-3
-              mt-7
-            "
+            className={`mt-7 grid gap-3 ${
+              location.state?.invitedEmail ? "grid-cols-1" : "grid-cols-2"
+            }`}
           >
 
             {/* STUDENT */}
@@ -1209,9 +1216,8 @@ export const Register = () => {
             </button>
 
 
-            {/* FACULTY */}
-
-            <button
+            {!location.state?.invitedEmail && (
+              <button
               type="button"
               onClick={() =>
                 handleRoleChange("faculty")
@@ -1239,7 +1245,8 @@ export const Register = () => {
 
               Faculty
 
-            </button>
+              </button>
+            )}
 
           </div>
 
@@ -1381,6 +1388,7 @@ export const Register = () => {
                   type="email"
                   autoComplete="email"
                   placeholder="name@institution.edu"
+                  readOnly={Boolean(location.state?.invitedEmail)}
                   className={`
                     w-full
                     h-13

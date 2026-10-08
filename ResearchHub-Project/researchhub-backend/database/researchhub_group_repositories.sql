@@ -25,8 +25,10 @@ CREATE TABLE IF NOT EXISTS repository_invitations (
     email VARCHAR(150) NOT NULL,
     token_hash CHAR(64) NOT NULL UNIQUE,
     delivery_status ENUM('pending', 'sent', 'failed') NOT NULL DEFAULT 'pending',
+    response_status ENUM('pending', 'accepted', 'rejected') NOT NULL DEFAULT 'pending',
     expires_at DATETIME NOT NULL,
     accepted_at DATETIME NULL,
+    responded_at DATETIME NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY unique_repository_invitation (repository_id, email),
     INDEX idx_repository_invitations_token (token_hash),
@@ -40,6 +42,11 @@ CREATE TABLE IF NOT EXISTS repository_invitations (
         REFERENCES users(id)
         ON DELETE CASCADE
 );
+
+UPDATE repository_invitations
+SET response_status = 'accepted',
+    responded_at = COALESCE(responded_at, accepted_at)
+WHERE accepted_at IS NOT NULL AND response_status = 'pending';
 
 CREATE TABLE IF NOT EXISTS repository_documents (
     id INT AUTO_INCREMENT PRIMARY KEY,

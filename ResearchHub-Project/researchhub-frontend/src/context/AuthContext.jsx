@@ -4,16 +4,19 @@ const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
 
-  // Get previously logged-in user from localStorage
+  // Remove credentials saved by previous versions that persisted them across browser sessions.
   const [user, setUser] = useState(() => {
-    const savedUser = localStorage.getItem("user");
+    localStorage.removeItem("user");
+    localStorage.removeItem("token");
+
+    const savedUser = sessionStorage.getItem("user");
 
     return savedUser ? JSON.parse(savedUser) : null;
   });
 
-  // Get JWT token from localStorage
+  // Keep credentials only for the current browser tab session.
   const [token, setToken] = useState(() => {
-    return localStorage.getItem("token") || null;
+    return sessionStorage.getItem("token") || null;
   });
 
 
@@ -25,16 +28,16 @@ export const AuthProvider = ({ children }) => {
 
     setUser(userData);
 
-    // Save user information
-    localStorage.setItem(
+    // Save user information for the current tab session.
+    sessionStorage.setItem(
       "user",
       JSON.stringify(userData)
     );
 
-    // Save JWT token
+    // Save the JWT token for the current tab session.
     if (authToken) {
       setToken(authToken);
-      localStorage.setItem("token", authToken);
+      sessionStorage.setItem("token", authToken);
     }
   };
 
@@ -48,8 +51,8 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
     setToken(null);
 
-    localStorage.removeItem("user");
-    localStorage.removeItem("token");
+    sessionStorage.removeItem("user");
+    sessionStorage.removeItem("token");
   };
 
 

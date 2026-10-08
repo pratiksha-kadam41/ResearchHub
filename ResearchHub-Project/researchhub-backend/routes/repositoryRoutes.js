@@ -4,7 +4,11 @@ const {
   acceptRepositoryInvitation,
   createRepository,
   getRepositoryDocuments,
+  getRepositoryInvitation,
+  getMyInvitations,
   getRepositories,
+  rejectRepositoryInvitation,
+  respondToInvitation,
   getRepository,
   getPublicRepositories,
   generateRepositoryInvitationLink,
@@ -19,6 +23,20 @@ const router = express.Router();
 router.post("/", authMiddleware, createRepository);
 router.get("/", authMiddleware, getRepositories);
 router.get("/public", authMiddleware, getPublicRepositories);
+
+// In-app: logged-in student fetches their own pending invitations
+router.get("/invitations/mine", authMiddleware, getMyInvitations);
+
+// In-app: accept or reject by invitation ID (no raw token needed)
+router.post("/invitations/:invitationId/respond/:decision", authMiddleware, respondToInvitation);
+
+router.get("/invitations/:token", getRepositoryInvitation);
+router.post(
+  "/invitations/:token/accept",
+  authMiddleware,
+  acceptRepositoryInvitation,
+);
+router.post("/invitations/:token/reject", rejectRepositoryInvitation);
 router.get("/:repositoryId/documents", authMiddleware, getRepositoryDocuments);
 router.post("/:repositoryId/documents", authMiddleware, saveRepositoryDocument);
 router.put(
@@ -39,10 +57,4 @@ router.post(
   authMiddleware,
   resendRepositoryInvitation,
 );
-router.post(
-  "/invitations/:token/accept",
-  authMiddleware,
-  acceptRepositoryInvitation,
-);
-
 module.exports = router;
