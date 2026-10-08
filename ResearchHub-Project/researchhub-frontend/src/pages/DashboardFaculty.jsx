@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import {
   AlertCircle,
   Bell,
@@ -18,8 +18,9 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import NotificationBell from "../components/NotificationBell";
 
 /* ── helpers ───────────────────────────────────────────────── */
 function StatCard({ icon: Icon, label, value, tone = "blue" }) {
@@ -387,7 +388,7 @@ export const DashboardFaculty = () => {
             {/* name */}
             <div className="hidden text-right sm:block">
               <p className="text-xs font-bold text-slate-800">{user?.name || "Professor"}</p>
-              <p className="text-[10px] text-slate-500">Professor / Faculty</p>
+              <p className="text-[10px] text-slate-500">Faculty / Mentor</p>
             </div>
 
           </div>
@@ -398,7 +399,9 @@ export const DashboardFaculty = () => {
 
         {/* page title */}
         <div className="mb-7">
-          <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-600">Faculty research portal</p>
+          <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-600">
+            Faculty research portal
+          </p>
           <h1 className="mt-2 text-3xl font-bold tracking-tight text-[#102A63]">
             {activeSection === "dashboard"
               ? `Welcome back, ${user?.name || "Professor"}`

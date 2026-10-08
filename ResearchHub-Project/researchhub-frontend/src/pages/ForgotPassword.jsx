@@ -12,6 +12,9 @@ const forgotSchema = z.object({
 export const ForgotPassword = () => {
   const [isSubmitted, setIsSubmitted] = useState(false);
   
+  const [loading, setLoading] = useState(false);
+  const [apiError, setApiError] = useState("");
+
   const {
     register,
     handleSubmit,
@@ -20,10 +23,25 @@ export const ForgotPassword = () => {
     resolver: zodResolver(forgotSchema),
   });
 
-  const onSubmit = (data) => {
-    // Fake submit
-    console.log('Password reset requested for:', data.email);
-    setIsSubmitted(true);
+  const onSubmit = async (data) => {
+    setLoading(true);
+    setApiError("");
+    try {
+      const response = await fetch("/api/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: data.email }),
+      });
+      const result = await response.json();
+      if (!response.ok && response.status !== 202) {
+        throw new Error(result.message || "Unable to request password reset.");
+      }
+      setIsSubmitted(true);
+    } catch (err) {
+      setApiError(err.message || "Failed to submit password reset request.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -60,11 +78,18 @@ export const ForgotPassword = () => {
                   {errors.email && <p className="mt-1 text-sm text-red-500">{errors.email.message}</p>}
                 </div>
 
+                {apiError && (
+                  <div className="rounded-lg bg-red-50 p-3 text-sm text-red-600 border border-red-200">
+                    {apiError}
+                  </div>
+                )}
+
                 <button
                   type="submit"
-                  className="w-full flex justify-center items-center py-2.5 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
+                  disabled={loading}
+                  className="w-full flex justify-center items-center py-2.5 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
                 >
-                  Send Reset Link
+                  {loading ? "Sending..." : "Send Reset Link"}
                   <ArrowRight size={16} className="ml-2" />
                 </button>
               </form>

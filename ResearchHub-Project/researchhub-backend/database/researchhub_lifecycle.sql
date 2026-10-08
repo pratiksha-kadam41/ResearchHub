@@ -51,10 +51,12 @@ CREATE TABLE IF NOT EXISTS milestones (
     created_by INT NOT NULL,
     title VARCHAR(180) NOT NULL,
     description TEXT NULL,
-    weight DECIMAL(5,2) NOT NULL,
+    marks INT NOT NULL DEFAULT 0,
+    earned_marks INT NOT NULL DEFAULT 0,
+    weight DECIMAL(5,2) NOT NULL DEFAULT 0,
     deadline DATETIME NOT NULL,
     completion_percentage DECIMAL(5,2) NOT NULL DEFAULT 0,
-    status ENUM('PENDING', 'IN_PROGRESS', 'COMPLETED', 'LATE', 'OVERDUE') NOT NULL DEFAULT 'PENDING',
+    status ENUM('NOT_STARTED', 'PENDING', 'IN_PROGRESS', 'SUBMITTED', 'APPROVED', 'REJECTED', 'OVERDUE', 'COMPLETED', 'LATE') NOT NULL DEFAULT 'NOT_STARTED',
     submission_status ENUM('DRAFT', 'SUBMITTED', 'UNDER_REVIEW', 'REVISION_REQUIRED', 'RESUBMITTED', 'APPROVED', 'REJECTED') NOT NULL DEFAULT 'DRAFT',
     extension_requested_deadline DATETIME NULL,
     extension_reason TEXT NULL,
@@ -62,10 +64,13 @@ CREATE TABLE IF NOT EXISTS milestones (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_milestones_repository_deadline (repository_id, deadline),
+    INDEX idx_milestones_repository_marks (repository_id, marks),
     CONSTRAINT fk_milestones_repository
         FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE,
     CONSTRAINT fk_milestones_creator
-        FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
+        FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT chk_milestones_marks CHECK (marks >= 0 AND marks <= 20),
+    CONSTRAINT chk_milestones_earned_marks CHECK (earned_marks >= 0 AND earned_marks <= 20)
 );
 
 CREATE TABLE IF NOT EXISTS tasks (

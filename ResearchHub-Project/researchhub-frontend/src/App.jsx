@@ -16,6 +16,11 @@ import CreateRepository from "./pages/CreateRepository";
 import RepositoryWorkspace from "./pages/RepositoryWorkspace";
 import AcceptRepositoryInvitation from "./pages/AcceptRepositoryInvitation";
 import InviteRepositoryMembers from "./pages/InviteRepositoryMembers";
+import Tasks from "./pages/Task";
+import { ResetPassword } from "./pages/ResetPassword";
+import FindMentor from "./pages/FindMentor";
+import SharedLibrary from "./pages/SharedLibrary";
+
 
 // Redirect already-logged-in users away from public pages
 const PublicRoute = ({ children }) => {
@@ -55,6 +60,7 @@ function App() {
           {/* Protected Routes — student */}
           <Route element={<ProtectedRoute allowedRoles={['student']} />}>
             <Route path="/dashboard/student" element={<DashboardStudent />} />
+            <Route path="/tasks" element={<Tasks />} />
             <Route path="/complete-profile" element={<CompleteProfile />} />
             <Route path="/repository/create" element={<CreateRepository />} />
             <Route path="/repository/group-invite" element={<InviteRepositoryMembers />} />

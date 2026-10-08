@@ -21,20 +21,14 @@ import {
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import NotificationBell from "../components/NotificationBell";
 
 const navigationItems = [
   { label: "Dashboard", icon: LayoutDashboard, path: "/dashboard/student" },
-  { label: "My Research", icon: FolderKanban, path: "/research" },
-  { label: "Repository", icon: FolderGit2, path: "/repository" },
-  { label: "Milestones", icon: LayoutDashboard, path: "/milestones" },
-  { label: "Tasks", icon: LayoutDashboard, path: "/tasks" },
-  { label: "Research Group", icon: Users, path: "/research-group" },
+  { label: "Create Project", icon: Plus, path: "/repository/create" },
   { label: "Find Mentor", icon: UserRound, path: "/find-mentor" },
-  { label: "Resources", icon: FolderGit2, path: "/resources" },
-  { label: "Submissions", icon: FolderGit2, path: "/submissions" },
-  { label: "Reviews", icon: FolderGit2, path: "/reviews" },
-  { label: "Notifications", icon: Bell, path: "/notifications" },
-  { label: "Settings", icon: Settings, path: "/settings" },
+  { label: "My Tasks", icon: LayoutDashboard, path: "/tasks" },
+  { label: "Shared Library", icon: FolderGit2, path: "/shared-library" },
 ];
 
 function SidebarItem({ icon: Icon, label, active, onClick }) {

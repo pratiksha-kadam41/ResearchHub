@@ -6,10 +6,19 @@ const {
   getRepositoryMentorship,
   parsePositiveId,
 } = require("../services/repositoryAccess");
+const { reviewSubmission, submitMilestoneWork } = require("./submissionController");
 
-const MILESTONE_STATUSES = ["PENDING", "IN_PROGRESS", "COMPLETED", "LATE", "OVERDUE"];
-const TASK_STATUSES = ["TODO", "IN_PROGRESS", "COMPLETED"];
-const PRIORITIES = ["LOW", "MEDIUM", "HIGH", "URGENT"];
+const MILESTONE_STATUSES = [
+  "NOT_STARTED",
+  "PENDING",
+  "IN_PROGRESS",
+  "SUBMITTED",
+  "APPROVED",
+  "REJECTED",
+  "OVERDUE",
+  "COMPLETED",
+  "LATE",
+];
 
 const text = (value, maxLength) =>
   typeof value === "string" && value.trim() && value.trim().length <= maxLength
@@ -21,15 +30,29 @@ const numericPercentage = (value) => {
   return Number.isFinite(number) && number >= 0 && number <= 100 ? number : null;
 };
 
+const parseMarks = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 && number <= 20 ? number : null;
+};
+
 const futureDate = (value) => {
   if (typeof value !== "string" || !value.trim()) return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) || date <= new Date() ? null : date;
 };
 
+const normalizeStatus = (value) => {
+  const status = typeof value === "string" ? value.trim().toUpperCase() : "";
+  if (status === "DRAFT") return "NOT_STARTED";
+  if (status === "DONE") return "COMPLETED";
+  return MILESTONE_STATUSES.includes(status) ? status : null;
+};
+
 const getMilestone = async (milestoneId) => {
   const [rows] = await db.promise().execute(
-    `SELECT m.*, r.name AS repository_name
+    `SELECT m.*, r.name AS repository_name,
+            COALESCE(m.marks, m.weight, 0) AS marks,
+            COALESCE(m.earned_marks, 0) AS earned_marks
      FROM milestones m
      INNER JOIN repositories r ON r.id = m.repository_id
      WHERE m.id = ?`,
@@ -39,6 +62,7 @@ const getMilestone = async (milestoneId) => {
 };
 
 const canAccessRepository = async (repositoryId, user) => {
+  if (!repositoryId || !user) return false;
   if (user.role === "student") {
     return getRepositoryMembership(repositoryId, user.id);
   }
@@ -47,6 +71,44 @@ const canAccessRepository = async (repositoryId, user) => {
 
 const canManageRepositoryMilestones = async (repositoryId, userId) =>
   getRepositoryMentorship(repositoryId, userId);
+
+const getMilestoneById = async (req, res) => {
+  const milestoneId = parsePositiveId(req.params.milestoneId);
+  if (!milestoneId) return res.status(400).json({ message: "Invalid milestone ID." });
+
+  try {
+    const milestone = await getMilestone(milestoneId);
+    if (!milestone) return res.status(404).json({ message: "Milestone not found." });
+    if (!(await canAccessRepository(milestone.repository_id, req.user))) {
+      return res.status(404).json({ message: "Project not found or you do not have access." });
+    }
+    return res.status(200).json({ milestone });
+  } catch (error) {
+    console.error("Milestone lookup failed:", error);
+    return res.status(500).json({ message: "Unable to load milestone." });
+  }
+};
+
+const validateMilestoneTotals = async (repositoryId, milestoneMarks, milestoneId = null) => {
+  const [[countRow]] = await db.promise().execute(
+    `SELECT COUNT(*) AS milestone_count,
+            COALESCE(SUM(COALESCE(marks, weight, 0)), 0) AS total_marks
+     FROM milestones
+     WHERE repository_id = ? ${milestoneId ? "AND id <> ?" : ""}`,
+    milestoneId ? [repositoryId, milestoneId] : [repositoryId],
+  );
+
+  if (Number(countRow.milestone_count) >= 5 && !milestoneId) {
+    return { valid: false, message: "Maximum 5 milestones are allowed for a research repository." };
+  }
+
+  const totalMarks = Number(countRow.total_marks) + Number(milestoneMarks || 0);
+  if (totalMarks > 20) {
+    return { valid: false, message: "The total marks for all milestones cannot exceed 20." };
+  }
+
+  return { valid: true };
+};
 
 const listRepositoryMilestones = async (req, res) => {
   const repositoryId = parsePositiveId(req.params.repositoryId);
@@ -59,8 +121,10 @@ const listRepositoryMilestones = async (req, res) => {
 
     const [milestones] = await db.promise().execute(
       `SELECT m.*,
+              COALESCE(m.marks, m.weight, 0) AS marks,
+              COALESCE(m.earned_marks, 0) AS earned_marks,
               CASE
-                WHEN m.deadline < UTC_TIMESTAMP() AND m.status NOT IN ('COMPLETED', 'LATE') THEN 'OVERDUE'
+                WHEN m.deadline < UTC_TIMESTAMP() AND m.status NOT IN ('COMPLETED', 'LATE', 'APPROVED') THEN 'OVERDUE'
                 ELSE m.status
               END AS effective_status,
               COUNT(t.id) AS task_count,
@@ -84,11 +148,24 @@ const createMilestone = async (req, res) => {
   const repositoryId = parsePositiveId(req.params.repositoryId);
   const title = text(req.body.title, 180);
   const description = typeof req.body.description === "string" ? req.body.description.trim() || null : null;
+  const marksInput = parseMarks(req.body.marks);
+  const legacyWeight = req.body.weight !== undefined ? Number(req.body.weight) : null;
   const weight = numericPercentage(req.body.weight);
   const deadline = futureDate(req.body.deadline);
+  const marks = marksInput ?? (legacyWeight !== null && legacyWeight > 0 && legacyWeight <= 20 ? legacyWeight : null);
+  const normalizedWeight = weight ?? (marks !== null ? marks : null);
+  const effectiveMarks = marks ?? (normalizedWeight !== null ? Math.min(normalizedWeight, 20) : null);
 
-  if (!repositoryId || !title || weight === null || weight === 0 || !deadline || (description && description.length > 10000)) {
-    return res.status(422).json({ message: "Provide a title, a weight from 0.01 to 100, and a future deadline." });
+  if (!repositoryId || !title || !deadline || (description && description.length > 10000)) {
+    return res.status(422).json({ message: "Provide a title, a valid future deadline, and valid milestone marks." });
+  }
+
+  if (effectiveMarks === null) {
+    return res.status(422).json({ message: "Milestone marks are required and must be greater than 0 and not exceed 20." });
+  }
+
+  if (effectiveMarks > 20) {
+    return res.status(422).json({ message: "Marks must be positive and must not exceed 20 individually." });
   }
 
   try {
@@ -96,28 +173,26 @@ const createMilestone = async (req, res) => {
       return res.status(403).json({ message: "Only the assigned professor can create milestones." });
     }
 
-    const [[total]] = await db.promise().execute(
-      "SELECT COALESCE(SUM(weight), 0) AS total_weight FROM milestones WHERE repository_id = ?",
-      [repositoryId],
-    );
-    if (Number(total.total_weight) + weight > 100) {
-      return res.status(409).json({ message: "Milestone weights cannot exceed 100% for a project." });
+    const totalValidation = await validateMilestoneTotals(repositoryId, effectiveMarks, null);
+    if (!totalValidation.valid) {
+      return res.status(409).json({ message: totalValidation.message });
     }
 
     const [result] = await db.promise().execute(
-      `INSERT INTO milestones (repository_id, created_by, title, description, weight, deadline)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [repositoryId, req.user.id, title, description, weight, deadline],
+      `INSERT INTO milestones (repository_id, created_by, title, description, marks, earned_marks, weight, deadline, status)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?, 'NOT_STARTED')`,
+      [repositoryId, req.user.id, title, description, effectiveMarks, normalizedWeight ?? effectiveMarks, deadline],
     );
+
     const memberIds = await getRepositoryMemberIds(repositoryId);
     await createNotifications(memberIds, {
       type: "MILESTONE_CREATED",
-      title: "New milestone",
-      message: `${title} has been added to your project plan.`,
+      title: "New milestone assigned",
+      message: `New milestone assigned: ${title}. Deadline: ${new Date(deadline).toLocaleDateString()}. Marks: ${effectiveMarks}.`,
       linkUrl: `/repository/${repositoryId}`,
     });
 
-    return res.status(201).json({ message: "Milestone created.", milestoneId: result.insertId });
+    return res.status(201).json({ message: "Milestone created.", milestoneId: result.insertId, marks: effectiveMarks });
   } catch (error) {
     console.error("Milestone creation failed:", error);
     return res.status(500).json({ message: "Unable to create milestone." });
@@ -141,26 +216,27 @@ const updateMilestone = async (req, res) => {
       : typeof req.body.description === "string" && req.body.description.trim().length <= 10000
         ? req.body.description.trim() || null
         : undefined;
-    const weight = req.body.weight === undefined ? Number(milestone.weight) : numericPercentage(req.body.weight);
+    const requestedMarks = req.body.marks !== undefined ? parseMarks(req.body.marks) : Number(milestone.marks || milestone.weight || 0);
+    const requestedWeight = req.body.weight !== undefined ? numericPercentage(req.body.weight) : Number(milestone.weight || milestone.marks || 0);
+    const marks = requestedMarks ?? (requestedWeight !== null ? Math.min(requestedWeight, 20) : null);
+    const weight = req.body.weight !== undefined ? requestedWeight : Number(milestone.weight || milestone.marks || 0);
     const deadline = req.body.deadline === undefined ? new Date(milestone.deadline) : futureDate(req.body.deadline);
-    const status = req.body.status === undefined ? milestone.status : String(req.body.status).toUpperCase();
+    const status = req.body.status === undefined ? (milestone.status || "NOT_STARTED") : normalizeStatus(req.body.status);
 
-    if (!title || description === undefined || weight === null || weight === 0 || !deadline || !MILESTONE_STATUSES.includes(status)) {
+    if (!title || description === undefined || !marks || !deadline || !status) {
       return res.status(422).json({ message: "One or more milestone fields are invalid." });
     }
-    const [[total]] = await db.promise().execute(
-      "SELECT COALESCE(SUM(weight), 0) AS total_weight FROM milestones WHERE repository_id = ? AND id <> ?",
-      [milestone.repository_id, milestoneId],
-    );
-    if (Number(total.total_weight) + weight > 100) {
-      return res.status(409).json({ message: "Milestone weights cannot exceed 100% for a project." });
+
+    const totalValidation = await validateMilestoneTotals(milestone.repository_id, marks, milestoneId);
+    if (!totalValidation.valid) {
+      return res.status(409).json({ message: totalValidation.message });
     }
 
     await db.promise().execute(
       `UPDATE milestones
-       SET title = ?, description = ?, weight = ?, deadline = ?, status = ?
+       SET title = ?, description = ?, marks = ?, earned_marks = LEAST(COALESCE(earned_marks, 0), ?), weight = ?, deadline = ?, status = ?
        WHERE id = ?`,
-      [title, description, weight, deadline, status, milestoneId],
+      [title, description, marks, marks, weight, deadline, status, milestoneId],
     );
     return res.status(200).json({ message: "Milestone updated." });
   } catch (error) {
@@ -200,7 +276,7 @@ const updateMilestoneProgress = async (req, res) => {
     if (!(await getRepositoryMembership(milestone.repository_id, req.user.id))) {
       return res.status(403).json({ message: "You do not have access to this milestone." });
     }
-    const status = completion === 100 ? "COMPLETED" : completion > 0 ? "IN_PROGRESS" : "PENDING";
+    const status = completion === 100 ? "COMPLETED" : completion > 0 ? "IN_PROGRESS" : "NOT_STARTED";
     await db.promise().execute(
       "UPDATE milestones SET completion_percentage = ?, status = ? WHERE id = ?",
       [completion, status, milestoneId],
@@ -297,12 +373,23 @@ const decideDeadlineExtension = async (req, res) => {
   }
 };
 
+const submitMilestone = async (req, res) => {
+  return submitMilestoneWork(req, res);
+};
+
+const reviewMilestone = async (req, res) => {
+  return reviewSubmission(req, res);
+};
+
 module.exports = {
   createMilestone,
   decideDeadlineExtension,
   deleteMilestone,
+  getMilestoneById,
   listRepositoryMilestones,
   requestDeadlineExtension,
+  reviewMilestone,
+  submitMilestone,
   updateMilestone,
   updateMilestoneProgress,
 };
