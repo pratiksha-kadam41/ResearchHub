@@ -750,21 +750,23 @@ const generateRepositoryInvitationLink = async (req, res) => {
 };
 
 const getRepositoryDocuments = async (req, res) => {
-  if (!isStudent(req, res)) {
-    return;
-  }
-
   const repositoryId = Number(req.params.repositoryId);
   if (!Number.isSafeInteger(repositoryId) || repositoryId < 1) {
     return res.status(400).json({ message: "Invalid repository ID." });
   }
 
   try {
-    const [[membership]] = await db.promise().execute(
-      "SELECT 1 FROM repository_members WHERE repository_id = ? AND user_id = ?",
-      [repositoryId, req.user.id],
-    );
-    if (!membership) {
+    const isMember = req.user.role === "student"
+      ? (await db.promise().execute(
+          "SELECT 1 FROM repository_members WHERE repository_id = ? AND user_id = ?",
+          [repositoryId, req.user.id],
+        ))[0].length > 0
+      : (await db.promise().execute(
+          "SELECT 1 FROM mentor_requests WHERE repository_id = ? AND faculty_id = ? AND status = 'ACCEPTED'",
+          [repositoryId, req.user.id],
+        ))[0].length > 0;
+
+    if (!isMember) {
       return res.status(404).json({
         message: "Repository not found or you are not a member.",
       });
@@ -788,10 +790,6 @@ const getRepositoryDocuments = async (req, res) => {
 };
 
 const saveRepositoryDocument = async (req, res) => {
-  if (!isStudent(req, res)) {
-    return;
-  }
-
   const repositoryId = Number(req.params.repositoryId);
   const documentId = req.params.documentId
     ? Number(req.params.documentId)
@@ -821,11 +819,17 @@ const saveRepositoryDocument = async (req, res) => {
   }
 
   try {
-    const [[membership]] = await db.promise().execute(
-      "SELECT 1 FROM repository_members WHERE repository_id = ? AND user_id = ?",
-      [repositoryId, req.user.id],
-    );
-    if (!membership) {
+    const isMember = req.user.role === "student"
+      ? (await db.promise().execute(
+          "SELECT 1 FROM repository_members WHERE repository_id = ? AND user_id = ?",
+          [repositoryId, req.user.id],
+        ))[0].length > 0
+      : (await db.promise().execute(
+          "SELECT 1 FROM mentor_requests WHERE repository_id = ? AND faculty_id = ? AND status = 'ACCEPTED'",
+          [repositoryId, req.user.id],
+        ))[0].length > 0;
+
+    if (!isMember) {
       return res.status(404).json({
         message: "Repository not found or you are not a member.",
       });

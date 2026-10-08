@@ -73,6 +73,10 @@ const getStudentDetailedProfile = (req, res) => {
             sp.research_interests, 
             sp.skills, 
             sp.bio, 
+            sp.research_areas,
+            sp.previous_projects,
+            sp.publications,
+            sp.research_experience,
             sp.profile_completed, 
             sp.created_at, 
             sp.updated_at 
@@ -131,6 +135,10 @@ const createStudentProfile = (req, res) => {
     research_interests,
     skills,
     bio,
+    research_areas,
+    previous_projects,
+    publications,
+    research_experience,
   } = req.body;
 
   // ---------------------------------------------
@@ -199,9 +207,13 @@ const createStudentProfile = (req, res) => {
                 research_interests, 
                 skills, 
                 bio, 
+                research_areas,
+                previous_projects,
+                publications,
+                research_experience,
                 profile_completed
             ) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
     db.query(
@@ -222,6 +234,10 @@ const createStudentProfile = (req, res) => {
         research_interests || null,
         skills || null,
         bio || null,
+        research_areas || null,
+        previous_projects || null,
+        publications || null,
+        research_experience || null,
         true,
       ],
       (err, result) => {
@@ -264,6 +280,10 @@ const updateStudentProfile = (req, res) => {
     research_interests,
     skills,
     bio,
+    research_areas,
+    previous_projects,
+    publications,
+    research_experience,
   } = req.body;
 
   // ---------------------------------------------
@@ -336,6 +356,10 @@ const updateStudentProfile = (req, res) => {
             research_interests = ?,
             skills = ?,
             bio = ?,
+            research_areas = ?,
+            previous_projects = ?,
+            publications = ?,
+            research_experience = ?,
             profile_completed = ?
         WHERE user_id = ?
     `;
@@ -357,6 +381,10 @@ const updateStudentProfile = (req, res) => {
         research_interests || null,
         skills || null,
         bio || null,
+        research_areas || null,
+        previous_projects || null,
+        publications || null,
+        research_experience || null,
         true,
         studentId,
       ],

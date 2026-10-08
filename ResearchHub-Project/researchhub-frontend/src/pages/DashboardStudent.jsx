@@ -18,20 +18,14 @@ import {
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import NotificationBell from "../components/NotificationBell";
 
 const navigationItems = [
   { label: "Dashboard", icon: LayoutDashboard, path: "/dashboard/student" },
-  { label: "My Research", icon: FolderKanban, path: "/research" },
-  { label: "Repository", icon: FolderGit2, path: "/repository" },
-  { label: "Milestones", icon: LayoutDashboard, path: "/milestones" },
-  { label: "Tasks", icon: LayoutDashboard, path: "/tasks" },
-  { label: "Research Group", icon: Users, path: "/research-group" },
+  { label: "Create Project", icon: Plus, path: "/repository/create" },
   { label: "Find Mentor", icon: UserRound, path: "/find-mentor" },
-  { label: "Resources", icon: FolderGit2, path: "/resources" },
-  { label: "Submissions", icon: FolderGit2, path: "/submissions" },
-  { label: "Reviews", icon: FolderGit2, path: "/reviews" },
-  { label: "Notifications", icon: Bell, path: "/notifications" },
-  { label: "Settings", icon: Settings, path: "/settings" },
+  { label: "My Tasks", icon: LayoutDashboard, path: "/tasks" },
+  { label: "Shared Library", icon: FolderGit2, path: "/shared-library" },
 ];
 
 function SidebarItem({ icon: Icon, label, active, onClick }) {
@@ -304,21 +298,24 @@ export const DashboardStudent = () => {
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={openProfile}
-            className="flex items-center gap-2 rounded-xl px-2 py-1.5 text-left transition hover:bg-slate-50"
-          >
-            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-100 text-[10px] font-bold text-blue-700">
-              {initials}
-            </span>
-            <span className="hidden md:block">
-              <span className="block text-[11px] font-bold text-slate-800">{name}</span>
-              <span className="block text-[9px] text-slate-400">
-                {student?.role || "Student"}
+          <div className="flex items-center gap-3">
+            <NotificationBell />
+            <button
+              type="button"
+              onClick={openProfile}
+              className="flex items-center gap-2 rounded-xl px-2 py-1.5 text-left transition hover:bg-slate-50"
+            >
+              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-100 text-[10px] font-bold text-blue-700">
+                {initials}
               </span>
-            </span>
-          </button>
+              <span className="hidden md:block">
+                <span className="block text-[11px] font-bold text-slate-800">{name}</span>
+                <span className="block text-[9px] text-slate-400">
+                  {student?.role || "Student"}
+                </span>
+              </span>
+            </button>
+          </div>
         </header>
 
         <div className="mx-auto max-w-[1600px] p-5 lg:p-8">

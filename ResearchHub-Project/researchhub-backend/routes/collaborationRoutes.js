@@ -7,6 +7,8 @@ const router = express.Router();
 
 router.get("/repository/:repositoryId/comments", authMiddleware, authorize("student", "faculty"), listComments);
 router.post("/repository/:repositoryId/comments", authMiddleware, authorize("student", "faculty"), createComment);
+router.get("/repository/:repositoryId", authMiddleware, authorize("student", "faculty"), listComments);
+router.post("/repository/:repositoryId", authMiddleware, authorize("student", "faculty"), createComment);
 router.patch("/comments/:commentId", authMiddleware, authorize("student", "faculty"), updateComment);
 router.delete("/comments/:commentId", authMiddleware, authorize("student", "faculty"), deleteComment);
 
