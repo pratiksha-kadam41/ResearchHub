@@ -1,50 +1,117 @@
 import React from "react";
-import { ArrowLeft, CheckCircle2, LoaderCircle, Mail, Users } from "lucide-react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import {
+  ArrowLeft,
+  LoaderCircle,
+  Mail,
+  Users,
+} from "lucide-react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
 export default function AcceptRepositoryInvitation() {
-  const { token: invitationToken } = useParams();
+  const { token: invitationToken, decision: requestedDecision } = useParams();
+  const decision = requestedDecision || "accept";
   const { token: authToken, user } = useAuth();
+  const location = useLocation();
   const navigate = useNavigate();
   const [error, setError] = React.useState("");
   const [loading, setLoading] = React.useState(false);
-  const [accepted, setAccepted] = React.useState(false);
+  const [invitationLoading, setInvitationLoading] = React.useState(true);
+  const [invitation, setInvitation] = React.useState(null);
+  const [responseStatus, setResponseStatus] = React.useState(null);
+  const responseStarted = React.useRef(false);
 
-  const acceptInvitation = async () => {
-    if (!authToken) {
-      setError("Sign in with the invited student account, then reopen this email link.");
+  React.useEffect(() => {
+    let active = true;
+
+    fetch(`/api/repositories/invitations/${invitationToken}`)
+      .then(async (response) => {
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.message || "Unable to load this invitation.");
+        }
+        return result;
+      })
+      .then((result) => {
+        if (active) {
+          setInvitation(result);
+        }
+      })
+      .catch((requestError) => {
+        if (active) {
+          setError(requestError.message);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setInvitationLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [invitationToken]);
+
+  const respondToInvitation = React.useCallback(async () => {
+    if (decision === "accept" && !authToken) {
+      setError("Sign in with the invited student account to accept this invitation.");
       return;
     }
 
+    if (decision === "accept" && user?.role !== "student") {
+      setError("Only the invited student account can accept this invitation.");
+      return;
+    }
+
+    if (responseStarted.current) {
+      return;
+    }
+
+    responseStarted.current = true;
     setLoading(true);
     setError("");
 
     try {
+      const headers = authToken
+        ? { Authorization: `Bearer ${authToken}` }
+        : {};
       const response = await fetch(
-        `/api/repositories/invitations/${invitationToken}/accept`,
-        {
-          method: "POST",
-          headers: { Authorization: `Bearer ${authToken}` },
-        },
+        `/api/repositories/invitations/${invitationToken}/${decision}`,
+        { method: "POST", headers },
       );
       const result = await response.json();
 
       if (!response.ok) {
-        throw new Error(result.message || "Unable to accept this invitation.");
+        throw new Error(
+          result.message || "Unable to respond to this invitation.",
+        );
       }
 
-      setAccepted(true);
-      navigate(`/repository/${result.repositoryId}`, {
-        replace: true,
-        state: { notice: result.message },
-      });
+      setResponseStatus(result.status);
+      if (decision === "accept") {
+        navigate(`/repository/${result.repositoryId}`, {
+          replace: true,
+          state: { notice: result.message },
+        });
+      } else {
+        setInvitation((current) =>
+          current ? { ...current, status: result.status } : current,
+        );
+      }
     } catch (requestError) {
+      responseStarted.current = false;
       setError(requestError.message);
     } finally {
       setLoading(false);
     }
-  };
+  }, [authToken, decision, invitationToken, navigate, user?.role]);
+
+  const returnTo =
+    decision === "accept"
+      ? `/invitations/respond/${invitationToken}/accept`
+      : location.pathname;
+  const validDecision = decision === "accept" || decision === "reject";
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#F5F8FC] px-5 py-10">
@@ -58,53 +125,122 @@ export default function AcceptRepositoryInvitation() {
         </Link>
 
         <div className="mt-8 flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-600">
-          {accepted ? <CheckCircle2 size={23} /> : <Users size={23} />}
+          {loading || invitationLoading ? (
+            <LoaderCircle size={23} className="animate-spin" />
+          ) : (
+            <Users size={23} />
+          )}
         </div>
         <h1 className="mt-5 text-2xl font-bold text-slate-900">
-          Join a research group
+          {loading
+            ? decision === "accept"
+              ? "Accepting invitation..."
+              : "Rejecting invitation..."
+            : responseStatus
+              ? `Invitation ${responseStatus}`
+              : decision === "reject"
+                ? "Decline this invitation?"
+                : "Join a research group"}
         </h1>
         <p className="mt-2 text-sm leading-6 text-slate-600">
-          Accept this invitation to join the shared repository. You must be
-          signed in to the student account that received the email.
+          {decision === "reject"
+            ? "Confirm below to decline this invitation. This will notify the repository owner."
+            : "Confirm below to join the repository. You must use the student account that received this invitation."}
         </p>
 
-        {!authToken ? (
+        {!validDecision ? (
+          <p
+            role="alert"
+            className="mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+          >
+            This invitation action is invalid.
+          </p>
+        ) : invitationLoading ? (
+          <div
+            role="status"
+            className="mt-6 flex items-center justify-center gap-2 rounded-xl bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800"
+          >
+            <LoaderCircle size={17} className="animate-spin" />
+            Loading invitation details...
+          </div>
+        ) : !invitation ? null : responseStatus ? (
+          <div
+            role="status"
+            className={`mt-6 rounded-xl border p-4 text-sm font-semibold ${
+              responseStatus === "accepted"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                : "border-slate-200 bg-slate-50 text-slate-700"
+            }`}
+          >
+            {responseStatus === "accepted"
+              ? "You joined the repository."
+              : "You declined this invitation."}
+          </div>
+        ) : invitation.status !== "pending" ? (
+          <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+            This invitation has already been {invitation.status}.
+          </div>
+        ) : decision === "accept" && !authToken ? (
           <div className="mt-6 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">
             <div className="flex gap-2">
               <Mail size={17} className="mt-0.5 shrink-0" />
               <p>
-                Sign in or create a student account using the invited email,
-                then reopen this invitation link.
+                To accept, first sign in or create a student account using{" "}
+                <strong>{invitation.email}</strong>.
               </p>
             </div>
             <div className="mt-4 flex gap-3">
               <Link
                 to="/login"
+                state={{
+                  returnTo,
+                  invitedEmail: invitation.email,
+                }}
                 className="rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700"
               >
                 Sign in
               </Link>
               <Link
                 to="/register"
+                state={{
+                  returnTo,
+                  invitedEmail: invitation.email,
+                }}
                 className="rounded-lg border border-blue-200 px-4 py-2 font-semibold text-blue-700 hover:bg-white"
               >
                 Create account
               </Link>
             </div>
           </div>
-        ) : user?.role !== "student" ? (
+        ) : decision === "accept" && user?.role !== "student" ? (
           <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             Group invitations can only be accepted by a student account.
+          </div>
+        ) : loading ? (
+          <div
+            role="status"
+            className="mt-6 flex items-center justify-center gap-2 rounded-xl bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800"
+          >
+            <LoaderCircle size={17} className="animate-spin" />
+            {decision === "accept"
+              ? "Adding you to the repository..."
+              : "Updating invitation status..."}
           </div>
         ) : (
           <button
             type="button"
-            disabled={loading}
-            onClick={acceptInvitation}
-            className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60"
+            onClick={respondToInvitation}
+            className={`mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold text-white ${
+              decision === "accept"
+                ? "bg-blue-600 hover:bg-blue-700"
+                : "bg-red-600 hover:bg-red-700"
+            }`}
           >
-            {loading && <LoaderCircle size={17} className="animate-spin" />}
-            Accept invitation
+            {error
+              ? "Try again"
+              : decision === "accept"
+                ? "Accept invitation"
+                : "Reject invitation"}
           </button>
         )}
 
@@ -114,6 +250,15 @@ export default function AcceptRepositoryInvitation() {
             className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
           >
             {error}
+          </p>
+        )}
+        {invitation && (
+          <p className="mt-4 text-xs leading-5 text-slate-500">
+            Invitation to join <strong>{invitation.repositoryName}</strong>
+            {" for "}
+            <strong>{invitation.email}</strong>.
+            {decision === "accept" && !authToken &&
+              " Sign in or create a student account with this email before accepting."}
           </p>
         )}
       </section>

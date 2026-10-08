@@ -96,8 +96,8 @@ export default function InviteRepositoryMembers() {
           </h1>
           <p className="mt-2 text-sm leading-6 text-slate-500">
             Add student email addresses for <strong>{repositoryData.name}</strong>.
-            Each person receives a secure invitation link. They join the group
-            only after signing in with the invited email and accepting.
+            Each person will receive an in-app invitation on their dashboard.
+            They join the group only after signing in and accepting the invitation.
           </p>
 
           <label
@@ -120,7 +120,7 @@ export default function InviteRepositoryMembers() {
             className="mt-2 w-full resize-y rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-50"
           />
           <p className="mt-2 text-xs text-slate-500">
-            Separate addresses with commas or new lines. Invite 3–4 people; with you, the group will have 4–5 members.
+            Separate addresses with commas or new lines. Invite 3–4 people; with you, the group will have 4–5 members. Each person must already have a ResearchHub account to receive the in-app invitation.
           </p>
 
           {error && (
@@ -156,8 +156,7 @@ export default function InviteRepositoryMembers() {
                 </>
               ) : (
                 "Create group & send invitations"
-              )}
-            </button>
+              )}            </button>
           </div>
         </form>
       </div>

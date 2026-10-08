@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS mentor_requests (
     faculty_id INT NOT NULL,
     requested_by INT NOT NULL,
     message TEXT NULL,
+    rejection_reason TEXT NULL,
     status ENUM('PENDING', 'ACCEPTED', 'REJECTED', 'CANCELLED') NOT NULL DEFAULT 'PENDING',
     responded_at DATETIME NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,

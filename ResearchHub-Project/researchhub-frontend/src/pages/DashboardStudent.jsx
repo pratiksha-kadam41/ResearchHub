@@ -2,6 +2,7 @@ import React from "react";
 import {
   BookOpen,
   Bell,
+  CheckCircle2,
   FolderGit2,
   FolderKanban,
   HelpCircle,
@@ -11,10 +12,12 @@ import {
   Menu,
   Pencil,
   Plus,
+  Search,
   Settings,
   UserRound,
   Users,
   X,
+  XCircle,
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
@@ -71,6 +74,8 @@ export const DashboardStudent = () => {
   const [student, setStudent] = React.useState(user);
   const [studentError, setStudentError] = React.useState("");
   const [repositories, setRepositories] = React.useState([]);
+  const [repositorySearch, setRepositorySearch] = React.useState("");
+  const [repositoryFilter, setRepositoryFilter] = React.useState("all");
   const [repositoriesLoading, setRepositoriesLoading] = React.useState(true);
   const [repositoriesError, setRepositoriesError] = React.useState("");
   const [profile, setProfile] = React.useState(null);
@@ -78,8 +83,16 @@ export const DashboardStudent = () => {
   const [profileError, setProfileError] = React.useState("");
   const [profileOpen, setProfileOpen] = React.useState(false);
   const [profileIncomplete, setProfileIncomplete] = React.useState(false);
+  const [invitations, setInvitations] = React.useState([]);
+  const [invitationsLoading, setInvitationsLoading] = React.useState(true);
+  const [invitationActionId, setInvitationActionId] = React.useState(null);
+  const [notifications, setNotifications] = React.useState([]);
+  const [notificationsOpen, setNotificationsOpen] = React.useState(false);
   const [showCreatedAlert, setShowCreatedAlert] = React.useState(
     Boolean(location.state?.repositoryCreated),
+  );
+  const [alertMessage, setAlertMessage] = React.useState(
+    location.state?.repositoryCreated ? "Repository created successfully" : "",
   );
 
   React.useEffect(() => {
@@ -90,6 +103,7 @@ export const DashboardStudent = () => {
     let active = true;
     const loadDashboard = async () => {
       try {
+        // Core requests — must succeed
         const [studentResponse, repositoryResponse] = await Promise.all([
           fetch("/api/student/me", {
             headers: { Authorization: `Bearer ${token}` },
@@ -107,26 +121,42 @@ export const DashboardStudent = () => {
           throw new Error(studentResult.message || "Unable to load your account.");
         }
         if (!repositoryResponse.ok) {
-          throw new Error(
-            repositoryResult.message || "Unable to load your repositories.",
-          );
+          throw new Error(repositoryResult.message || "Unable to load your repositories.");
         }
 
         if (active) {
           setStudent(studentResult.user);
           setRepositories(repositoryResult.repositories);
         }
+
+        // Secondary requests — load independently, never crash the dashboard
+        const [invResp, notifResp] = await Promise.allSettled([
+          fetch("/api/repositories/invitations/mine", {
+            headers: { Authorization: `Bearer ${token}` },
+          }).then((r) => r.json()),
+          fetch("/api/notifications", {
+            headers: { Authorization: `Bearer ${token}` },
+          }).then((r) => r.json()),
+        ]);
+
+        if (active) {
+          if (invResp.status === "fulfilled") {
+            setInvitations(invResp.value.invitations || []);
+          }
+          if (notifResp.status === "fulfilled") {
+            setNotifications(notifResp.value.notifications || []);
+          }
+        }
       } catch (error) {
         console.error("Student dashboard load error:", error);
         if (active) {
           setStudentError(error.message || "Unable to load your account.");
-          setRepositoriesError(
-            error.message || "Unable to load your repositories.",
-          );
+          setRepositoriesError(error.message || "Unable to load your repositories.");
         }
       } finally {
         if (active) {
           setRepositoriesLoading(false);
+          setInvitationsLoading(false);
         }
       }
     };
@@ -157,6 +187,20 @@ export const DashboardStudent = () => {
   const groupCount = repositories.filter(
     (repository) => repository.research_type === "group",
   ).length;
+  const visibleRepositories = repositories.filter((repository) => {
+    const query = repositorySearch.trim().toLowerCase();
+    const matchesSearch = !query || [
+      repository.name,
+      repository.description,
+      repository.domain,
+      repository.faculty_collaborator_name,
+    ].some((value) => value?.toLowerCase().includes(query));
+    const matchesFilter = repositoryFilter === "all"
+      || (repositoryFilter === "group" && repository.research_type === "group")
+      || (repositoryFilter === "individual" && repository.research_type === "individual")
+      || (repositoryFilter === "collaboration" && repository.guidance_request_status);
+    return matchesSearch && matchesFilter;
+  });
   const initials = name
     .split(/\s+/)
     .map((part) => part[0])
@@ -172,6 +216,86 @@ export const DashboardStudent = () => {
   const handleLogout = () => {
     logout();
     navigate("/login");
+  };
+
+  const handleInvitationResponse = async (invitation, decision) => {
+    if (!token) return;
+    setInvitationActionId(invitation.id);
+    try {
+      // Use the ID-based in-app endpoint (invitation.id, not token_hash)
+      const response = await fetch(
+        `/api/repositories/invitations/${invitation.id}/respond/${decision}`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.message || `Unable to ${decision} invitation.`);
+      }
+
+      // Remove this invitation from the pending list
+      setInvitations((prev) => prev.filter((inv) => inv.id !== invitation.id));
+
+      // Mark the matching notification as read
+      setNotifications((prev) =>
+        prev.map((n) =>
+          n.type === "REPOSITORY_INVITATION" &&
+          n.title.includes(invitation.repository_name)
+            ? { ...n, is_read: true }
+            : n,
+        ),
+      );
+
+      if (decision === "accept") {
+        // Reload repositories — accepted repo now appears in the list
+        const repoResponse = await fetch("/api/repositories", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const repoResult = await repoResponse.json();
+        if (repoResponse.ok) {
+          setRepositories(repoResult.repositories);
+        }
+        // Show the repository-created success toast
+        setAlertMessage(`You joined "${invitation.repository_name}" successfully.`);
+        setShowCreatedAlert(true);
+        window.setTimeout(() => setShowCreatedAlert(false), 4500);
+      }
+    } catch (error) {
+      console.error(`Invitation ${decision} error:`, error);
+      alert(error.message || `Unable to ${decision} the invitation. Please try again.`);
+    } finally {
+      setInvitationActionId(null);
+    }
+  };
+
+  const markNotificationRead = async (notifId) => {
+    if (!token) return;
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === notifId ? { ...n, is_read: true } : n)),
+    );
+    try {
+      await fetch(`/api/notifications/${notifId}/read`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch (err) {
+      console.error("Mark notification read failed:", err);
+    }
+  };
+
+  const markAllNotificationsRead = async () => {
+    if (!token) return;
+    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+    try {
+      await fetch("/api/notifications/read-all", {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch (err) {
+      console.error("Mark all notifications read failed:", err);
+    }
   };
 
   const openProfile = async () => {
@@ -211,7 +335,9 @@ export const DashboardStudent = () => {
           aria-live="polite"
           className="fixed right-4 top-4 z-[60] flex w-[calc(100%-2rem)] max-w-sm items-center gap-3 rounded-xl border border-emerald-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-lg"
         >
-          <span className="flex-1">Repository created successfully</span>
+          <span className="flex-1">
+              {alertMessage || "Repository created successfully"}
+            </span>
           <button
             type="button"
             aria-label="Dismiss notification"
@@ -304,21 +430,110 @@ export const DashboardStudent = () => {
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={openProfile}
-            className="flex items-center gap-2 rounded-xl px-2 py-1.5 text-left transition hover:bg-slate-50"
-          >
-            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-100 text-[10px] font-bold text-blue-700">
-              {initials}
-            </span>
-            <span className="hidden md:block">
-              <span className="block text-[11px] font-bold text-slate-800">{name}</span>
-              <span className="block text-[9px] text-slate-400">
-                {student?.role || "Student"}
+          <div className="flex items-center gap-2">
+            {/* ── Bell / Notifications ── */}
+            <div className="relative">
+              <button
+                type="button"
+                aria-label="Notifications"
+                onClick={() => setNotificationsOpen((o) => !o)}
+                className="relative flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-100"
+              >
+                <Bell size={20} />
+                {notifications.filter((n) => !n.is_read).length > 0 && (
+                  <span className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
+                    {notifications.filter((n) => !n.is_read).length > 9
+                      ? "9+"
+                      : notifications.filter((n) => !n.is_read).length}
+                  </span>
+                )}
+              </button>
+
+              {notificationsOpen && (
+                <>
+                  {/* backdrop */}
+                  <button
+                    type="button"
+                    aria-label="Close notifications"
+                    className="fixed inset-0 z-40"
+                    onClick={() => setNotificationsOpen(false)}
+                  />
+                  <div className="absolute right-0 top-11 z-50 w-80 rounded-2xl border border-slate-200 bg-white shadow-xl">
+                    <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+                      <h3 className="text-sm font-bold text-slate-800">Notifications</h3>
+                      {notifications.some((n) => !n.is_read) && (
+                        <button
+                          type="button"
+                          onClick={markAllNotificationsRead}
+                          className="text-[10px] font-semibold text-blue-600 hover:text-blue-700"
+                        >
+                          Mark all as read
+                        </button>
+                      )}
+                    </div>
+                    <div className="max-h-80 overflow-y-auto">
+                      {notifications.length === 0 ? (
+                        <p className="px-4 py-6 text-center text-xs text-slate-400">
+                          No notifications yet.
+                        </p>
+                      ) : (
+                        notifications.map((notif) => (
+                          <button
+                            key={notif.id}
+                            type="button"
+                            onClick={() => {
+                              markNotificationRead(notif.id);
+                              if (notif.link_url) {
+                                navigate(notif.link_url);
+                                setNotificationsOpen(false);
+                              }
+                            }}
+                            className={`flex w-full gap-3 px-4 py-3 text-left transition hover:bg-slate-50 ${
+                              !notif.is_read ? "bg-blue-50/50" : ""
+                            }`}
+                          >
+                            <span
+                              className={`mt-1 h-2 w-2 shrink-0 rounded-full ${
+                                !notif.is_read ? "bg-blue-500" : "bg-transparent"
+                              }`}
+                            />
+                            <div className="min-w-0">
+                              <p className="text-xs font-semibold text-slate-800">
+                                {notif.title}
+                              </p>
+                              <p className="mt-0.5 text-[11px] leading-4 text-slate-500">
+                                {notif.message}
+                              </p>
+                              <p className="mt-1 text-[10px] text-slate-400">
+                                {new Date(notif.created_at).toLocaleString()}
+                              </p>
+                            </div>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* ── Profile avatar ── */}
+            <button
+              type="button"
+              onClick={openProfile}
+              className="flex items-center gap-2 rounded-xl px-2 py-1.5 text-left transition hover:bg-slate-50"
+            >
+              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-100 text-[10px] font-bold text-blue-700">
+                {initials}
               </span>
-            </span>
-          </button>
+              <span className="hidden md:block">
+                <span className="block text-[11px] font-bold text-slate-800">{name}</span>
+                <span className="block text-[9px] text-slate-400">
+                  {student?.role || "Student"}
+                </span>
+              </span>
+            </button>
+          </div>
         </header>
 
         <div className="mx-auto max-w-[1600px] p-5 lg:p-8">
@@ -370,6 +585,82 @@ export const DashboardStudent = () => {
             />
           </section>
 
+          {/* ── Pending invitations ─────────────────────────────── */}
+          {(invitationsLoading || invitations.length > 0) && (
+            <section className="mb-6 rounded-2xl bg-white p-5 shadow-sm lg:p-6">
+              <div className="mb-5 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="font-bold text-[#102A63]">Pending invitations</h2>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Group repositories you have been invited to join.
+                  </p>
+                </div>
+                <Bell size={20} className="text-blue-600" />
+              </div>
+
+              {invitationsLoading ? (
+                <div className="flex items-center gap-2 py-6 text-sm text-slate-500">
+                  <Loader2 size={17} className="animate-spin text-blue-600" />
+                  Loading invitations…
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {invitations.map((inv) => {
+                    const busy = invitationActionId === inv.id;
+                    return (
+                      <div
+                        key={inv.id}
+                        className="flex flex-col gap-3 rounded-xl border border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold text-slate-800">
+                            {inv.repository_name}
+                          </p>
+                          <p className="mt-0.5 text-xs text-slate-500">
+                            <span className="font-medium text-slate-600">{inv.inviter_name}</span>
+                            {" invited you · "}
+                            {inv.domain}
+                            {" · "}
+                            {inv.research_type === "group" ? "Group" : "Individual"} research
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 gap-2">
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleInvitationResponse(inv, "accept")}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60"
+                          >
+                            {busy ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : (
+                              <CheckCircle2 size={14} />
+                            )}
+                            Accept
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleInvitationResponse(inv, "reject")}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-wait disabled:opacity-60"
+                          >
+                            {busy ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : (
+                              <XCircle size={14} />
+                            )}
+                            Reject
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* ── Repositories ────────────────────────────────────── */}
           <section className="rounded-2xl bg-white p-5 shadow-sm lg:p-6">
             <div className="mb-5 flex items-center justify-between gap-3">
               <div>
@@ -380,6 +671,44 @@ export const DashboardStudent = () => {
               </div>
               <FolderGit2 size={20} className="text-blue-600" />
             </div>
+
+            {repositories.length > 0 && (
+              <div className="mb-5 space-y-3">
+                <label className="relative block">
+                  <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="search"
+                    value={repositorySearch}
+                    onChange={(event) => setRepositorySearch(event.target.value)}
+                    placeholder="Search repositories by name, topic, or faculty"
+                    aria-label="Search repositories"
+                    className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-50"
+                  />
+                </label>
+                <div className="flex flex-wrap gap-2" aria-label="Filter repositories">
+                  {[
+                    ["all", "All repositories"],
+                    ["collaboration", "With faculty requests"],
+                    ["group", "Group research"],
+                    ["individual", "Individual research"],
+                  ].map(([filter, label]) => (
+                    <button
+                      key={filter}
+                      type="button"
+                      aria-pressed={repositoryFilter === filter}
+                      onClick={() => setRepositoryFilter(filter)}
+                      className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                        repositoryFilter === filter
+                          ? "border-blue-700 bg-blue-700 text-white"
+                          : "border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:text-blue-700"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {!token ? (
               <p role="alert" className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -405,44 +734,72 @@ export const DashboardStudent = () => {
                 </p>
               </div>
             ) : (
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {repositories.map((repository) => (
-                  <button
-                    key={repository.id}
-                    type="button"
-                    onClick={() => navigate(`/repository/${repository.id}`)}
-                    className="rounded-xl border border-slate-200 p-4 text-left transition hover:border-blue-300 hover:bg-blue-50/40 focus:outline-none focus:ring-2 focus:ring-blue-300"
-                  >
-                    <span className="inline-flex rounded-full bg-blue-50 px-2.5 py-1 text-[9px] font-bold uppercase tracking-wide text-blue-700">
-                      {repository.research_type === "group"
-                        ? "Group research"
-                        : "Individual research"}
-                    </span>
-                    <span className="mt-2 block truncate text-sm font-bold text-slate-800">
-                      {repository.name}
-                    </span>
-                    {repository.description && (
-                      <span className="mt-1 line-clamp-2 block text-xs text-slate-500">
-                        {repository.description}
-                      </span>
-                    )}
-                    <span className="mt-3 block text-[10px] text-slate-500">
-                      {repository.member_count}{" "}
-                      {Number(repository.member_count) === 1 ? "member" : "members"}
-                      {" · Status: "}
-                      {repository.status}
-                    </span>
-                    {repository.members?.length > 0 && (
-                      <span className="mt-2 block text-[10px] leading-5 text-slate-600">
-                        <span className="font-semibold text-slate-700">
-                          Group members:{" "}
+              visibleRepositories.length === 0 ? (
+                <p className="rounded-xl bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                  No repositories match your search or filter.
+                </p>
+              ) : (
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {visibleRepositories.map((repository) => {
+                    const guidanceStatus = repository.faculty_collaborator_name
+                      ? "ACCEPTED"
+                      : repository.guidance_request_status || "NOT_REQUESTED";
+                    const collaborationStyles = {
+                      ACCEPTED: "bg-emerald-50 text-emerald-700 ring-emerald-200",
+                      PENDING: "bg-amber-50 text-amber-700 ring-amber-200",
+                      REJECTED: "bg-red-50 text-red-700 ring-red-200",
+                      NOT_REQUESTED: "bg-slate-100 text-slate-600 ring-slate-200",
+                    };
+                    const collaborationLabels = {
+                      ACCEPTED: "Faculty accepted",
+                      PENDING: "Request pending",
+                      REJECTED: "Request declined",
+                      NOT_REQUESTED: "No faculty request",
+                    };
+
+                    return (
+                      <button
+                        key={repository.id}
+                        type="button"
+                        onClick={() => navigate(`/repository/${repository.id}`)}
+                        className="group flex min-h-52 flex-col rounded-xl border border-slate-200 bg-white p-4 text-left transition hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-300"
+                      >
+                        <span className="flex w-full items-center justify-between gap-2">
+                          <span className="inline-flex rounded-full bg-blue-50 px-2.5 py-1 text-[9px] font-bold uppercase tracking-wide text-blue-700">
+                            {repository.research_type === "group" ? "Group research" : "Individual research"}
+                          </span>
+                          <span className={`rounded-full px-2.5 py-1 text-[9px] font-bold ring-1 ${collaborationStyles[guidanceStatus] || collaborationStyles.NOT_REQUESTED}`}>
+                            {collaborationLabels[guidanceStatus] || guidanceStatus.toLowerCase()}
+                          </span>
                         </span>
-                        {repository.members.map((member) => member.name).join(", ")}
-                      </span>
-                    )}
-                  </button>
-                ))}
-              </div>
+                        <span className="mt-3 block truncate text-sm font-bold text-slate-800 group-hover:text-blue-800">
+                          {repository.name}
+                        </span>
+                        {repository.faculty_collaborator_name && (
+                          <span className="mt-1 block text-xs font-semibold text-emerald-700">
+                            Faculty collaborator: {repository.faculty_collaborator_name}
+                          </span>
+                        )}
+                        <span className="mt-2 block text-[11px] font-medium text-slate-500">
+                          {repository.domain || "Research area not specified"}
+                        </span>
+                        {repository.description && (
+                          <span className="mt-1 line-clamp-2 block text-xs leading-5 text-slate-500">
+                            {repository.description}
+                          </span>
+                        )}
+                        <span className="mt-auto flex items-center justify-between gap-2 pt-4 text-[10px] text-slate-500">
+                          <span>
+                            {repository.member_count} {Number(repository.member_count) === 1 ? "member" : "members"}
+                            {" · "}{repository.status}
+                          </span>
+                          <span className="font-semibold text-blue-700 group-hover:underline">Open repository →</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )
             )}
           </section>
         </div>

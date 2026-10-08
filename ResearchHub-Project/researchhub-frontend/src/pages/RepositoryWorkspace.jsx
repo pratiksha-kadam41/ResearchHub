@@ -7,6 +7,7 @@ import {
   Copy,
   FileText,
   FolderGit2,
+  Handshake,
   LoaderCircle,
   LockKeyhole,
   Mail,
@@ -46,13 +47,16 @@ export default function RepositoryWorkspace() {
 
   const loadWorkspace = React.useCallback(async () => {
     const headers = { Authorization: `Bearer ${token}` };
-    const [workspaceResponse, documentsResponse] = await Promise.all([
+    const isStudent = user?.role?.toLowerCase() === "student";
+    const [workspaceResponse, documentsResponse, mentorRequestsResponse] = await Promise.all([
       fetch(`/api/repositories/${repositoryId}`, { headers }),
       fetch(`/api/repositories/${repositoryId}/documents`, { headers }),
+      ...(isStudent ? [fetch("/api/mentor-requests", { headers })] : []),
     ]);
-    const [workspaceResult, documentsResult] = await Promise.all([
+    const [workspaceResult, documentsResult, mentorRequestsResult] = await Promise.all([
       workspaceResponse.json(),
       documentsResponse.json(),
+      ...(isStudent ? [mentorRequestsResponse.json()] : []),
     ]);
 
     if (!workspaceResponse.ok) {
@@ -61,9 +65,27 @@ export default function RepositoryWorkspace() {
     if (!documentsResponse.ok) {
       throw new Error(documentsResult.message || "Unable to load research notes.");
     }
+    if (isStudent && !mentorRequestsResponse.ok) {
+      throw new Error(mentorRequestsResult.message || "Unable to load faculty collaboration status.");
+    }
 
-    return { workspace: workspaceResult, documents: documentsResult.documents };
-  }, [repositoryId, token]);
+    const repositoryGuidanceRequests = isStudent
+      ? (mentorRequestsResult.requests || [])
+        .filter((request) => Number(request.repository_id) === Number(repositoryId))
+        .map((request) => ({
+          id: request.id,
+          status: request.status,
+          rejection_reason: request.rejection_reason,
+          responded_at: request.responded_at,
+          faculty_name: request.faculty_name,
+        }))
+      : workspaceResult.guidanceRequests || [];
+
+    return {
+      workspace: { ...workspaceResult, guidanceRequests: repositoryGuidanceRequests },
+      documents: documentsResult.documents,
+    };
+  }, [repositoryId, token, user?.role]);
 
   React.useEffect(() => {
     let active = true;
@@ -88,6 +110,47 @@ export default function RepositoryWorkspace() {
       active = false;
     };
   }, [loadWorkspace]);
+
+  React.useEffect(() => {
+    const refreshWhenVisible = async () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/repositories/${repositoryId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            result.message || "Unable to refresh repository status.",
+          );
+        }
+
+        setWorkspace((current) => ({
+          ...result,
+          guidanceRequests: result.guidanceRequests ?? current?.guidanceRequests ?? [],
+        }));
+      } catch (requestError) {
+        console.error("Repository status refresh failed:", requestError);
+        setError(
+          requestError.message || "Unable to refresh repository status.",
+        );
+      }
+    };
+    const refreshInterval = window.setInterval(refreshWhenVisible, 15000);
+
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+
+    return () => {
+      window.clearInterval(refreshInterval);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [repositoryId, token]);
 
   const saveDocument = async (event) => {
     event.preventDefault();
@@ -336,6 +399,65 @@ export default function RepositoryWorkspace() {
               </div>
             </section>
 
+            {user?.role?.toLowerCase() === "student" && (
+              <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-blue-700">
+                      <Handshake size={15} /> Faculty collaboration
+                    </p>
+                    <h2 className="mt-1 text-lg font-bold text-[#102A63]">Guidance requests for this repository</h2>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Request a faculty collaborator specifically for this research project.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => navigate("/find-mentor", { state: { repositoryId: workspace.repository.id } })}
+                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#0B285F] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#123C83]"
+                  >
+                    <Handshake size={16} />
+                    Request collaboration
+                  </button>
+                </div>
+
+                {workspace.guidanceRequests?.length > 0 ? (
+                  <div className="mt-4 space-y-2">
+                    {workspace.guidanceRequests.map((request) => (
+                      <article key={request.id} className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-sm font-semibold text-slate-800">
+                            {request.status === "ACCEPTED" ? "Faculty collaborator: " : "Request to: "}
+                            {request.faculty_name}
+                          </p>
+                          <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${
+                            request.status === "ACCEPTED"
+                              ? "bg-emerald-100 text-emerald-700"
+                              : request.status === "REJECTED"
+                                ? "bg-red-100 text-red-700"
+                                : request.status === "PENDING"
+                                  ? "bg-amber-100 text-amber-700"
+                                  : "bg-slate-200 text-slate-600"
+                          }`}>
+                            {request.status.toLowerCase()}
+                          </span>
+                        </div>
+                        {request.status === "REJECTED" && request.rejection_reason && (
+                          <p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-red-700">
+                            Reason: {request.rejection_reason}
+                          </p>
+                        )}
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-4 rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                    No faculty collaboration request has been sent for this repository.
+                  </p>
+                )}
+              </section>
+            )}
+
             <div className="mt-6 grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
               <section className="overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-sm">
                 <div className="border-b border-slate-100 px-5 py-5 sm:px-7">
@@ -528,10 +650,10 @@ export default function RepositoryWorkspace() {
                       </span>
                       <div>
                         <h2 className="font-bold text-[#102A63]">
-                          Pending invitations
+                          Invitations
                         </h2>
                         <p className="text-xs text-slate-500">
-                          Waiting for members to join
+                          Accepted, pending, and declined responses
                         </p>
                       </div>
                     </div>
@@ -545,12 +667,32 @@ export default function RepositoryWorkspace() {
                           <p className="break-all text-xs font-semibold text-slate-800">
                             {invitation.email}
                           </p>
-                          <p className="mt-1 text-[11px] capitalize text-slate-500">
-                            {invitation.delivery_status === "pending"
-                              ? "Email not sent yet"
-                              : "Email delivery failed"}
+                          <p
+                            className={`mt-1 text-[11px] font-semibold ${
+                              invitation.response_status === "accepted"
+                                ? "text-emerald-700"
+                                : invitation.response_status === "rejected"
+                                  ? "text-slate-600"
+                                  : "text-amber-700"
+                            }`}
+                          >
+                            Status:{" "}
+                            {invitation.response_status === "accepted"
+                              ? "Accepted"
+                              : invitation.response_status === "rejected"
+                                ? "Rejected"
+                                : "Pending"}
                           </p>
-                          {isOwner && (
+                          {invitation.response_status === "pending" && (
+                            <p className="mt-1 text-[11px] capitalize text-slate-500">
+                              {invitation.delivery_status === "sent"
+                                ? "Invitation email sent"
+                                : invitation.delivery_status === "failed"
+                                  ? "Invitation email delivery failed"
+                                  : "Invitation email not sent yet"}
+                            </p>
+                          )}
+                          {isOwner && invitation.response_status !== "accepted" && (
                             <div className="mt-3 flex flex-wrap gap-2">
                               <button
                                 type="button"
@@ -568,26 +710,31 @@ export default function RepositoryWorkspace() {
                                 ) : (
                                   <Mail size={13} />
                                 )}
-                                Generate link
+                                {invitation.response_status === "rejected"
+                                  ? "Invite again with link"
+                                  : "Generate link"}
                               </button>
-                              {invitation.delivery_status !== "sent" && (
-                                <button
-                                  type="button"
-                                  disabled={resending === invitation.id}
-                                  onClick={() => resendInvitation(invitation.id)}
-                                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[11px] font-bold text-slate-700 transition hover:border-blue-200 hover:text-blue-700 disabled:opacity-60"
-                                >
-                                  {resending === invitation.id ? (
-                                    <LoaderCircle size={13} className="animate-spin" />
-                                  ) : (
-                                    <RefreshCw size={13} />
-                                  )}
-                                  Send email
-                                </button>
-                              )}
+                              <button
+                                type="button"
+                                disabled={resending === invitation.id}
+                                onClick={() => resendInvitation(invitation.id)}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[11px] font-bold text-slate-700 transition hover:border-blue-200 hover:text-blue-700 disabled:opacity-60"
+                              >
+                                {resending === invitation.id ? (
+                                  <LoaderCircle size={13} className="animate-spin" />
+                                ) : (
+                                  <RefreshCw size={13} />
+                                )}
+                                {invitation.response_status === "rejected"
+                                  ? "Invite again by email"
+                                  : invitation.delivery_status === "sent"
+                                    ? "Resend email"
+                                    : "Send email"}
+                              </button>
                             </div>
                           )}
-                          {invitationLinks[invitation.email] && (
+                          {invitation.response_status === "pending" &&
+                            invitationLinks[invitation.email] && (
                             <div className="mt-3">
                               <p className="mb-1.5 text-[11px] text-slate-500">
                                 Share with this invitee:

@@ -1,8 +1,10 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider } from './context/AuthContext';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import CompleteProfile from "./pages/CompleteProfile";
+import CompleteFacultyProfile from "./pages/CompleteFacultyProfile";
+import FindMentor from "./pages/FindMentor";
 
 // Pages
 import { Login } from './pages/Login';
@@ -17,11 +19,21 @@ import InviteRepositoryMembers from "./pages/InviteRepositoryMembers";
 
 // Redirect already-logged-in users away from public pages
 const PublicRoute = ({ children }) => {
-  const savedUser = localStorage.getItem('user');
-  if (savedUser) {
-    const user = JSON.parse(savedUser);
+  const { user } = useAuth();
+  const location = useLocation();
+
+  if (user) {
+    const returnTo = location.state?.returnTo;
+    if (
+      typeof returnTo === "string" &&
+      /^\/invitations\/(?:accept\/[a-f\d]{64}|respond\/[a-f\d]{64}\/accept)$/i.test(returnTo)
+    ) {
+      return <Navigate to={returnTo} replace />;
+    }
+
     return <Navigate to={user.role === 'faculty' ? '/dashboard/faculty' : '/dashboard/student'} replace />;
   }
+
   return children;
 };
 
@@ -34,25 +46,26 @@ function App() {
           <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
           <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
-          <Route
-            path="/invitations/accept/:token"
-            element={<AcceptRepositoryInvitation />}
-          />
+          <Route path="/invitations/accept/:token" element={<AcceptRepositoryInvitation />} />
+          <Route path="/invitations/respond/:token/:decision" element={<AcceptRepositoryInvitation />} />
 
           {/* Open the login screen when a visitor first opens the website */}
           <Route path="/" element={<PublicRoute><Login /></PublicRoute>} />
 
-          {/* Protected Routes — require login */}
+          {/* Protected Routes — student */}
           <Route element={<ProtectedRoute allowedRoles={['student']} />}>
             <Route path="/dashboard/student" element={<DashboardStudent />} />
             <Route path="/complete-profile" element={<CompleteProfile />} />
             <Route path="/repository/create" element={<CreateRepository />} />
             <Route path="/repository/group-invite" element={<InviteRepositoryMembers />} />
             <Route path="/repository/:repositoryId" element={<RepositoryWorkspace />} />
+            <Route path="/find-mentor" element={<FindMentor />} />
           </Route>
 
+          {/* Protected Routes — faculty */}
           <Route element={<ProtectedRoute allowedRoles={['faculty']} />}>
             <Route path="/dashboard/faculty" element={<DashboardFaculty />} />
+            <Route path="/complete-faculty-profile" element={<CompleteFacultyProfile />} />
           </Route>
 
           {/* Catch-all redirect */}

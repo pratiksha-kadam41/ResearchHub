@@ -29,6 +29,36 @@ export default function CreateRepository() {
   });
   const [error, setError] = React.useState("");
   const [saving, setSaving] = React.useState(false);
+  const [profileChecking, setProfileChecking] = React.useState(true);
+
+  // Gate: redirect to complete-profile if the student hasn't completed it yet
+  React.useEffect(() => {
+    if (!token) {
+      setProfileChecking(false);
+      return;
+    }
+    fetch("/api/student/profile", {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.profileCompleted === false) {
+          navigate("/complete-profile", { replace: true });
+        }
+      })
+      .catch(() => {
+        // Network error — allow through, backend will validate
+      })
+      .finally(() => setProfileChecking(false));
+  }, [token, navigate]);
+
+  if (profileChecking) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#F5F8FC]">
+        <LoaderCircle size={28} className="animate-spin text-blue-600" />
+      </div>
+    );
+  }
 
   const handleChange = (field, value) => {
     setForm((prev) => ({
