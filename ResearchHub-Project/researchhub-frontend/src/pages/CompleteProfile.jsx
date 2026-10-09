@@ -13,17 +13,24 @@ import {
     BookOpen,
     Save,
     ArrowRight,
-    ArrowLeft,
     CheckCircle2,
-    Loader2
+    Loader2,
+    LayoutDashboard,
+    FolderGit2,
+    Plus,
+    UserRound,
+    Menu,
+    LogOut,
+    X,
 } from "lucide-react";
 
 export default function CompleteProfile() {
 
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
-    const { token } = useAuth();
+    const { token, logout } = useAuth();
     const isEditMode = searchParams.get("edit") === "true";
+    const [sidebarOpen, setSidebarOpen] = useState(false);
 
     const [form, setForm] = useState({
         phone: "",
@@ -48,6 +55,16 @@ export default function CompleteProfile() {
     const [error, setError] = useState("");
     const [saving, setSaving] = useState(false);
     const [checkingProfile, setCheckingProfile] = useState(true);
+
+    const navigateTo = (path) => {
+        setSidebarOpen(false);
+        navigate(path);
+    };
+
+    const handleLogout = () => {
+        logout();
+        navigate("/login");
+    };
 
     React.useEffect(() => {
         const loadProfile = async () => {
@@ -247,7 +264,7 @@ export default function CompleteProfile() {
 
     if (checkingProfile) {
         return (
-            <div className="flex min-h-screen items-center justify-center bg-slate-50">
+            <div className="flex min-h-screen items-center justify-center bg-[#F5F8FC]">
                 <div className="flex flex-col items-center gap-3 text-center">
                     <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#0B285F] text-white shadow-lg">
                         <Loader2 size={22} className="animate-spin" />
@@ -261,38 +278,95 @@ export default function CompleteProfile() {
     }
 
     return (
-        <div className="min-h-screen bg-slate-50">
+        <div className="min-h-screen bg-[#F5F8FC] text-slate-900">
+            {sidebarOpen && (
+                <button
+                    type="button"
+                    aria-label="Close navigation"
+                    onClick={() => setSidebarOpen(false)}
+                    className="fixed inset-0 z-40 bg-slate-950/50 lg:hidden"
+                />
+            )}
+
+            <aside className={`fixed inset-y-0 left-0 z-50 flex w-[250px] flex-col bg-gradient-to-b from-[#071A46] via-[#0B2B72] to-[#123C83] text-white transition-transform duration-300 ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
+                <div className="flex items-center gap-3 px-6 py-7">
+                    <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10">
+                        <BookOpen size={23} />
+                    </span>
+                    <h1 className="text-xl font-bold">
+                        Research<span className="text-blue-300">Hub</span>
+                    </h1>
+                </div>
+                <button
+                    type="button"
+                    aria-label="Close navigation"
+                    onClick={() => setSidebarOpen(false)}
+                    className="absolute right-4 top-5 text-blue-200 lg:hidden"
+                >
+                    <X size={20} />
+                </button>
+                <nav className="student-sidebar-nav flex-1 space-y-1 overflow-y-auto px-3" aria-label="Student navigation">
+                    {[
+                        ["Dashboard", LayoutDashboard, "/dashboard/student", false],
+                        ["Create Project", Plus, "/repository/create", false],
+                        ["My Project", FolderGit2, "/dashboard/student#repositories", false],
+                        ["Joined Project", FolderGit2, "/dashboard/student?filter=joined#repositories", false],
+                        ["Find Mentor", UserRound, "/find-mentor", false],
+                    ].map(([label, Icon, path, active]) => (
+                        <button
+                            key={label}
+                            type="button"
+                            onClick={() => navigateTo(path)}
+                            className={`flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium transition ${active ? "bg-white/15 text-white" : "text-blue-100/70 hover:bg-white/10 hover:text-white"}`}
+                        >
+                            <Icon size={18} />
+                            <span className="flex-1 text-left">{label}</span>
+                        </button>
+                    ))}
+                </nav>
+                <div className="border-t border-white/10 px-3 py-4">
+                    <button
+                        type="button"
+                        aria-current="page"
+                        onClick={() => setSidebarOpen(false)}
+                        className="flex w-full items-center gap-3 rounded-xl bg-white/15 px-4 py-2.5 text-sm font-medium text-white"
+                    >
+                        <UserRound size={18} />
+                        Profile
+                    </button>
+                    <button
+                        type="button"
+                        onClick={handleLogout}
+                        className="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm text-blue-100/70 transition hover:bg-red-500/10 hover:text-red-300"
+                    >
+                        <LogOut size={18} />
+                        Logout
+                    </button>
+                </div>
+            </aside>
+
+            <main className="min-h-screen lg:ml-[250px]">
 
             {/* =====================================================
                 HEADER
             ===================================================== */}
 
-            <header className="sticky top-0 z-40 border-b border-white/10 bg-[#0B285F] text-white shadow-lg shadow-slate-900/10">
-                <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4 sm:px-6">
-                    <div className="flex items-center gap-3">
-                        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/15">
-                            <BookOpen size={22} className="text-blue-200" />
-                        </div>
-
-                        <div>
-                            <h1 className="text-lg font-bold tracking-tight">
-                                Research<span className="text-blue-300">Hub</span>
-                            </h1>
-                            <p className="text-[9px] font-medium uppercase tracking-[0.2em] text-blue-200/70">
-                                Research Lifecycle Platform
-                            </p>
-                        </div>
-                    </div>
-
+            <header className="sticky top-0 z-30 flex h-[72px] items-center justify-between bg-white px-5 shadow-sm lg:px-8">
+                <div className="flex min-w-0 items-center gap-4">
                     <button
                         type="button"
-                        onClick={() => navigate("/dashboard/student")}
-                        className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3.5 py-2 text-xs font-semibold text-blue-50 transition hover:bg-white/10"
+                        aria-label="Open navigation"
+                        onClick={() => setSidebarOpen(true)}
+                        className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 lg:hidden"
                     >
-                        <ArrowLeft size={15} />
-                        <span className="hidden sm:inline">Back to Dashboard</span>
-                        <span className="sm:hidden">Back</span>
+                        <Menu size={20} />
                     </button>
+                    <div className="min-w-0">
+                        <h2 className="truncate text-base font-bold text-[#102A63] lg:text-lg">
+                            {isEditMode ? "Edit your profile" : "Complete your profile"}
+                        </h2>
+                        <p className="hidden text-xs text-slate-400 sm:block">Your academic and research information</p>
+                    </div>
                 </div>
             </header>
 
@@ -301,7 +375,7 @@ export default function CompleteProfile() {
                 MAIN
             ===================================================== */}
 
-            <main className="
+            <section className="
                 mx-auto
                 max-w-4xl
                 px-6
@@ -1371,8 +1445,9 @@ export default function CompleteProfile() {
 
                 </form>
 
-            </main>
+            </section>
 
+            </main>
         </div>
     );
 }

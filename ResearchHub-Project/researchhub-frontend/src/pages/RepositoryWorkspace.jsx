@@ -120,7 +120,11 @@ export default function RepositoryWorkspace() {
 
   const [submissionModalOpen, setSubmissionModalOpen] = useState(false);
   const [submittingMilestone, setSubmittingMilestone] = useState(null);
-  const [submissionForm, setSubmissionForm] = useState({ workUrl: "", notes: "", files: [] });
+  const [submissionForm, setSubmissionForm] = useState({
+    notes: "",
+    researchPaper: null,
+    supportingFiles: [],
+  });
   const [suggestionResponses, setSuggestionResponses] = useState({});
 
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
@@ -135,7 +139,9 @@ export default function RepositoryWorkspace() {
     suggestionReviews: {},
   });
   const [resourceModalOpen, setResourceModalOpen] = useState(false);
-  const [resourceForm, setResourceForm] = useState({ title: "", resourceType: "LINK", resourceUrl: "", notes: "", visibility: "PROJECT" });
+  const [resourceForm, setResourceForm] = useState({ title: "", resourceType: "LINK", resourceUrl: "", notes: "", file: null });
+  const [resourceError, setResourceError] = useState("");
+  const [savingResource, setSavingResource] = useState(false);
 
   const [commentInput, setCommentInput] = useState("");
   const [commentType, setCommentType] = useState("DISCUSSION");
@@ -478,7 +484,7 @@ export default function RepositoryWorkspace() {
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || "Unable to start milestone.");
       setSubmittingMilestone(milestone);
-      setSubmissionForm({ workUrl: "", notes: "", files: [] });
+      setSubmissionForm({ notes: "", researchPaper: null, supportingFiles: [] });
       setSuggestionResponses(Object.fromEntries(
         (milestone.previous_suggestions || []).map((suggestion) => [
           suggestion.id,
@@ -496,9 +502,8 @@ export default function RepositoryWorkspace() {
     event.preventDefault();
     if (!submittingMilestone) return;
     try {
-      const body = new FormData();
-      body.append("workUrl", submissionForm.workUrl);
-      body.append("notes", submissionForm.notes);
+    const body = new FormData();
+    body.append("notes", submissionForm.notes);
       body.append("suggestionResponses", JSON.stringify(
         Object.entries(suggestionResponses).map(([suggestionId, response]) => ({
           suggestionId: Number(suggestionId),
@@ -506,7 +511,10 @@ export default function RepositoryWorkspace() {
           status: response.status,
         })),
       ));
-      submissionForm.files.forEach((file) => body.append("files", file));
+      if (submissionForm.researchPaper) {
+        body.append("files", submissionForm.researchPaper);
+      }
+      submissionForm.supportingFiles.forEach((file) => body.append("files", file));
       const response = await fetch(`/api/submissions/milestone/${submittingMilestone.id}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
@@ -770,6 +778,82 @@ export default function RepositoryWorkspace() {
     }
   };
 
+  const handleSaveResource = async (event) => {
+    event.preventDefault();
+    setResourceError("");
+    if (!resourceForm.file && !resourceForm.resourceUrl.trim()) {
+      setResourceError("Upload a resource file or provide a valid resource URL.");
+      return;
+    }
+
+    setSavingResource(true);
+    try {
+      const body = new FormData();
+      body.append("repositoryId", repositoryId);
+      body.append("title", resourceForm.title);
+      body.append("resourceType", resourceForm.resourceType);
+      body.append("resourceUrl", resourceForm.resourceUrl);
+      body.append("notes", resourceForm.notes);
+      if (resourceForm.file) body.append("file", resourceForm.file);
+      const response = await fetch("/api/resources", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body,
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "Unable to save resource.");
+      setResourceModalOpen(false);
+      setResourceForm({ title: "", resourceType: "LINK", resourceUrl: "", notes: "", file: null });
+      setNotice(result.message || "Project resource added.");
+      await loadWorkspaceData();
+    } catch (saveError) {
+      setResourceError(saveError.message || "Unable to save resource.");
+    } finally {
+      setSavingResource(false);
+    }
+  };
+
+  const handleDeleteResource = async (resourceId) => {
+    if (!window.confirm("Delete this project resource?")) return;
+    try {
+      const response = await fetch(`/api/resources/${resourceId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "Unable to delete resource.");
+      setNotice(result.message || "Project resource deleted.");
+      await loadWorkspaceData();
+    } catch (deleteError) {
+      alert(deleteError.message || "Unable to delete resource.");
+    }
+  };
+
+  const handleOpenResource = async (resource) => {
+    if (!resource.has_file) return;
+    try {
+      const response = await fetch(resource.resource_url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const result = await response.json();
+        throw new Error(result.message || "Unable to open this project resource.");
+      }
+      const fileUrl = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = fileUrl;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.download = resource.file_name || resource.title;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(fileUrl), 60_000);
+    } catch (openError) {
+      alert(openError.message || "Unable to open this project resource.");
+    }
+  };
+
   const repo = workspace?.repository;
   const members = workspace?.members || [];
   const invitations = workspace?.invitations || [];
@@ -836,14 +920,11 @@ export default function RepositoryWorkspace() {
     { id: "faculty", label: "Faculty", icon: Handshake },
     { id: "research-paper", label: "Research Paper", icon: FileText },
     { id: "milestones", label: `Milestones (${milestones.length})`, icon: CalendarDays },
-    { id: "tasks", label: `Tasks (${tasks.length})`, icon: Check },
     { id: "resources", label: `Resources (${resources.length})`, icon: FolderGit2 },
-    { id: "discussions", label: `Discussions (${comments.length})`, icon: MessageSquare },
     { id: "submissions", label: `Submissions (${submissions.length})`, icon: FileText },
     { id: "evaluations", label: `Marks & Evaluation (${evaluations.length})`, icon: Award },
     { id: "results", label: "Results", icon: Award },
     { id: "history", label: "History", icon: Clock },
-    { id: "notes", label: `Notes (${documents.length})`, icon: Edit3 },
   ];
 
   return (
@@ -2172,7 +2253,8 @@ export default function RepositoryWorkspace() {
                   <button
                     type="button"
                     onClick={() => {
-                      setResourceForm({ title: "", resourceType: "LINK", resourceUrl: "", notes: "", visibility: "PROJECT" });
+                      setResourceError("");
+                      setResourceForm({ title: "", resourceType: "LINK", resourceUrl: "", notes: "", file: null });
                       setResourceModalOpen(true);
                     }}
                     className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 transition"
@@ -2218,14 +2300,24 @@ export default function RepositoryWorkspace() {
                         </div>
 
                         <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-                          <a
-                            href={res.resource_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 font-semibold text-blue-600 hover:text-blue-800"
-                          >
-                            Open Link <ExternalLink size={12} />
-                          </a>
+                          {res.has_file ? (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenResource(res)}
+                              className="inline-flex items-center gap-1 font-semibold text-blue-600 hover:text-blue-800"
+                            >
+                              Open Resource <ExternalLink size={12} />
+                            </button>
+                          ) : (
+                            <a
+                              href={res.resource_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 font-semibold text-blue-600 hover:text-blue-800"
+                            >
+                              Open Link <ExternalLink size={12} />
+                            </a>
+                          )}
                           {(res.uploaded_by === user?.id || isFaculty) && (
                             <button
                               type="button"
@@ -3100,59 +3192,100 @@ export default function RepositoryWorkspace() {
 
       {/* Submit Work Modal */}
       {submissionModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
-          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="text-base font-bold text-slate-900">
-                Milestone {submittingMilestone?.order_no}: {submittingMilestone?.title}
-              </h3>
-              <button onClick={() => setSubmissionModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
+          <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-slate-100 bg-white p-5 shadow-2xl sm:p-7">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
+              <div>
+                <span className="inline-flex rounded-full bg-blue-50 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-blue-700">
+                  Milestone {submittingMilestone?.order_no}
+                </span>
+                <h3 className="mt-2 text-lg font-bold text-[#102A63]">
+                  {submittingMilestone?.title}
+                </h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  Submit your research paper and supporting materials for review.
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="Close submission"
+                onClick={() => setSubmissionModalOpen(false)}
+                className="rounded-xl p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+              >
                 <X size={18} />
               </button>
             </div>
-            <form onSubmit={handleSubmitWork} className="mt-4 space-y-3.5 text-xs">
-              <p className="rounded-xl bg-blue-50 p-3 text-slate-700">
-                Deadline: {submittingMilestone && new Date(submittingMilestone.deadline).toLocaleString()}
+            <form onSubmit={handleSubmitWork} className="mt-5 space-y-4 text-xs">
+              <p className="flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-slate-700">
+                <CalendarDays size={15} className="shrink-0 text-blue-700" />
+                <span>
+                  <span className="font-semibold">Deadline: </span>
+                  {submittingMilestone && new Date(submittingMilestone.deadline).toLocaleString()}
+                </span>
               </p>
               {submittingMilestone?.instructions && (
                 <p className="whitespace-pre-line rounded-xl border border-blue-100 bg-blue-50/60 p-3 text-slate-700">
                   {submittingMilestone.instructions}
                 </p>
               )}
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">Upload PDF, materials, or questionnaire</label>
-                <input
-                  type="file"
-                  multiple
-                  accept=".csv,.doc,.docx,.jpg,.jpeg,.pdf,.png,.ppt,.pptx,.txt,.xls,.xlsx,.zip"
-                  onChange={(event) => setSubmissionForm({
-                    ...submissionForm,
-                    files: Array.from(event.target.files || []),
-                  })}
-                  className="w-full rounded-xl border border-slate-200 p-2.5"
-                />
-                <p className="mt-1 text-[11px] text-slate-500">Attach PDFs, questionnaires, or other supporting files. Up to 10 files, 15 MB each.</p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="group flex cursor-pointer flex-col rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 to-white p-4 transition hover:border-blue-300 hover:shadow-sm">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100 text-blue-700">
+                    <FileText size={19} />
+                  </span>
+                  <span className="mt-3 font-bold text-slate-800">Upload Research Paper</span>
+                  <span className="mt-1 text-[11px] leading-5 text-slate-500">Choose your paper as a PDF file.</span>
+                  <input
+                    type="file"
+                    accept=".pdf,application/pdf"
+                    onChange={(event) => setSubmissionForm({
+                      ...submissionForm,
+                      researchPaper: event.target.files?.[0] || null,
+                    })}
+                    className="mt-3 block w-full text-[11px] text-slate-500 file:mr-2 file:rounded-lg file:border-0 file:bg-white file:px-3 file:py-2 file:text-[11px] file:font-semibold file:text-blue-700"
+                  />
+                  {submissionForm.researchPaper && (
+                    <span className="mt-2 truncate text-[11px] font-semibold text-blue-700">
+                      {submissionForm.researchPaper.name}
+                    </span>
+                  )}
+                </label>
+
+                <label className="group flex cursor-pointer flex-col rounded-2xl border border-violet-100 bg-gradient-to-br from-violet-50 to-white p-4 transition hover:border-violet-300 hover:shadow-sm">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-100 text-violet-700">
+                    <ImageIcon size={19} />
+                  </span>
+                  <span className="mt-3 font-bold text-slate-800">Upload Pictures and Questionnaire</span>
+                  <span className="mt-1 text-[11px] leading-5 text-slate-500">Add images and questionnaire documents.</span>
+                  <input
+                    type="file"
+                    multiple
+                    accept=".csv,.doc,.docx,.jpg,.jpeg,.pdf,.png,.ppt,.pptx,.txt,.xls,.xlsx,.zip"
+                    onChange={(event) => setSubmissionForm({
+                      ...submissionForm,
+                      supportingFiles: Array.from(event.target.files || []),
+                    })}
+                    className="mt-3 block w-full text-[11px] text-slate-500 file:mr-2 file:rounded-lg file:border-0 file:bg-white file:px-3 file:py-2 file:text-[11px] file:font-semibold file:text-violet-700"
+                  />
+                  {submissionForm.supportingFiles.length > 0 && (
+                    <span className="mt-2 text-[11px] font-semibold text-violet-700">
+                      {submissionForm.supportingFiles.length} file{submissionForm.supportingFiles.length === 1 ? "" : "s"} selected
+                    </span>
+                  )}
+                </label>
               </div>
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">Work link (optional)</label>
-                <input
-                  type="url"
-                  value={submissionForm.workUrl}
-                  onChange={(e) => setSubmissionForm({ ...submissionForm, workUrl: e.target.value })}
-                  placeholder="https://github.com/... or https://drive.google.com/..."
-                  className="w-full rounded-xl border border-slate-200 p-2.5"
-                />
-              </div>
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">Student notes / questionnaire responses</label>
+              <p className="text-[11px] text-slate-500">Up to 10 files total, 15 MB each.</p>
+
+              <label className="block rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                <span className="mb-2 block font-bold text-slate-800">Student Note</span>
                 <textarea
-                  rows={4}
+                  rows={3}
                   value={submissionForm.notes}
-                  onChange={(e) => setSubmissionForm({ ...submissionForm, notes: e.target.value })}
-                  placeholder="Summarize your work or enter questionnaire responses..."
-                  className="w-full rounded-xl border border-slate-200 p-2.5"
+                  onChange={(event) => setSubmissionForm({ ...submissionForm, notes: event.target.value })}
+                  placeholder="Add a note about your submission..."
+                  className="w-full resize-y rounded-xl border border-slate-200 bg-white p-3 text-xs outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-50"
                 />
-              </div>
+              </label>
               {submittingMilestone?.paper_sections?.length > 0 && (
                 <section className="rounded-xl border border-violet-100 bg-violet-50/70 p-4">
                   <h4 className="text-sm font-bold text-violet-950">Research paper sections included</h4>
@@ -3221,17 +3354,17 @@ export default function RepositoryWorkspace() {
                   ))}
                 </section>
               )}
-              <div className="flex justify-end gap-2 pt-3">
+              <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
                 <button
                   type="button"
                   onClick={() => setSubmissionModalOpen(false)}
-                  className="rounded-xl px-4 py-2 font-semibold text-slate-600 hover:bg-slate-100"
+                  className="rounded-xl px-4 py-2.5 font-semibold text-slate-600 transition hover:bg-slate-100"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="rounded-xl bg-blue-600 px-5 py-2 font-semibold text-white hover:bg-blue-700"
+                  className="rounded-xl bg-blue-700 px-5 py-2.5 font-semibold text-white shadow-sm transition hover:bg-blue-800"
                 >
                   Submit for Review
                 </button>
@@ -3243,49 +3376,76 @@ export default function RepositoryWorkspace() {
 
       {/* Review Submission Modal (Faculty) */}
       {reviewModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
-          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="text-base font-bold text-slate-900">
-                Review M{reviewingSubmission?.milestone_number}: {reviewingSubmission?.milestone_title}
-              </h3>
-              <button onClick={() => setReviewModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 p-3 backdrop-blur-sm sm:p-5">
+          <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-white/70 bg-white shadow-2xl shadow-slate-950/30">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 bg-gradient-to-r from-blue-50 via-white to-indigo-50 px-5 py-4 sm:px-7">
+              <div>
+                <span className="inline-flex rounded-full bg-blue-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-blue-800">
+                  Faculty review
+                </span>
+                <h3 className="mt-2 text-lg font-bold text-[#102A63]">
+                  Review M{reviewingSubmission?.milestone_number}: {reviewingSubmission?.milestone_title}
+                </h3>
+                <p className="mt-1 text-xs text-slate-500">Check the submission and share actionable feedback.</p>
+              </div>
+              <button
+                type="button"
+                aria-label="Close review"
+                onClick={() => setReviewModalOpen(false)}
+                className="rounded-xl p-2 text-slate-400 transition hover:bg-white hover:text-slate-700"
+              >
                 <X size={18} />
               </button>
             </div>
-            <form onSubmit={handleReviewSubmission} className="mt-4 space-y-3.5 text-xs">
-              <div className="rounded-xl bg-slate-50 p-3">
-                <p className="font-bold text-slate-800">
+            <form onSubmit={handleReviewSubmission} className="overflow-y-auto px-5 py-5 text-xs sm:px-7">
+              <div className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50/90 to-slate-50 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <p className="font-bold leading-5 text-slate-800">
                   {reviewingSubmission?.project_name} · {reviewingSubmission?.group_members}
-                </p>
-                <p className="mt-1 text-slate-600">
-                  Submitted by {reviewingSubmission?.submitted_by_name} · {reviewingSubmission && new Date(reviewingSubmission.submitted_at).toLocaleString()} · {reviewingSubmission?.is_late ? "Late" : "On time"}
+                  </p>
+                  <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold ${reviewingSubmission?.is_late ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>
+                    {reviewingSubmission?.is_late ? "Late submission" : "On time"}
+                  </span>
+                </div>
+                <p className="mt-1 text-[11px] leading-5 text-slate-600">
+                  Submitted by {reviewingSubmission?.submitted_by_name} · {reviewingSubmission && new Date(reviewingSubmission.submitted_at).toLocaleString()}
                 </p>
                 {reviewingSubmission?.work_url && (
-                  <a href={reviewingSubmission.work_url} target="_blank" rel="noreferrer" className="mt-2 inline-block text-blue-700 underline">
+                  <a href={reviewingSubmission.work_url} target="_blank" rel="noreferrer" className="mt-3 inline-flex rounded-lg bg-white px-3 py-2 font-semibold text-blue-700 shadow-sm ring-1 ring-blue-100 transition hover:bg-blue-50">
                     Open work link
                   </a>
                 )}
-                {reviewingSubmission?.notes && <p className="mt-2 whitespace-pre-line text-slate-700">{reviewingSubmission.notes}</p>}
-                {reviewingSubmission?.files?.map((file) => (
-                  <button
-                    key={file.id}
-                    type="button"
-                    onClick={() => handleDownloadSubmissionFile(file)}
-                    className="mr-2 mt-2 rounded-lg bg-blue-50 px-2.5 py-1.5 font-semibold text-blue-700"
-                  >
-                    {file.file_name}
-                  </button>
-                ))}
+                {reviewingSubmission?.notes && (
+                  <p className="mt-3 whitespace-pre-line rounded-xl border border-white/80 bg-white/80 p-3 leading-5 text-slate-700">
+                    {reviewingSubmission.notes}
+                  </p>
+                )}
+                {reviewingSubmission?.files?.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {reviewingSubmission.files.map((file) => (
+                      <button
+                        key={file.id}
+                        type="button"
+                        onClick={() => handleDownloadSubmissionFile(file)}
+                        className="rounded-lg bg-white px-3 py-2 font-semibold text-blue-700 shadow-sm ring-1 ring-blue-100 transition hover:bg-blue-50"
+                      >
+                        {file.file_name}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               {reviewingSubmission?.suggestion_responses?.length > 0 && (
-                <section className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3">
-                  <h4 className="font-bold text-amber-950">Responses to previous suggestions</h4>
+                <section className="mt-4 space-y-3 rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
+                  <div>
+                    <h4 className="font-bold text-amber-950">Responses to previous suggestions</h4>
+                    <p className="mt-1 text-[11px] text-amber-800">Verify the student’s progress on earlier feedback.</p>
+                  </div>
                   {reviewingSubmission.suggestion_responses.map((item) => (
-                    <div key={item.suggestion_id} className="rounded-lg bg-white p-2.5">
-                      <p className="font-semibold">M{item.source_milestone_number}: {item.suggestion_text}</p>
+                    <div key={item.suggestion_id} className="rounded-xl border border-amber-100 bg-white p-3">
+                      <p className="font-semibold leading-5 text-slate-800">M{item.source_milestone_number}: {item.suggestion_text}</p>
                       <p className="mt-1 text-slate-600">Student response: {item.response}</p>
-                      <label className="mt-2 flex items-center gap-2 font-semibold">
+                      <label className="mt-3 flex flex-wrap items-center gap-2 font-semibold text-slate-700">
                         Faculty verification
                         <select
                           value={reviewForm.suggestionReviews[item.suggestion_id] || "IN_PROGRESS"}
@@ -3296,7 +3456,7 @@ export default function RepositoryWorkspace() {
                               [item.suggestion_id]: event.target.value,
                             },
                           })}
-                          className="rounded-lg border border-slate-200 p-1.5"
+                          className="rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-50"
                         >
                           <option value="ACCEPTED">Satisfactory</option>
                           <option value="IN_PROGRESS">Needs more work</option>
@@ -3306,50 +3466,51 @@ export default function RepositoryWorkspace() {
                   ))}
                 </section>
               )}
+              <div className="mt-4 space-y-4">
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Decision *</label>
+                <label className="mb-1.5 block font-bold text-slate-700">Decision *</label>
                 <select
                   value={reviewForm.decision}
                   onChange={(e) => setReviewForm({ ...reviewForm, decision: e.target.value })}
-                  className="w-full rounded-xl border border-slate-200 p-2.5"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-3 outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-50"
                 >
                   <option value="APPROVED">APPROVED</option>
                   <option value="REVISION_REQUIRED">REVISION REQUIRED</option>
                 </select>
               </div>
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Remarks</label>
+                <label className="mb-1.5 block font-bold text-slate-700">Remarks</label>
                 <textarea
                   rows={4}
                   value={reviewForm.remarks}
                   onChange={(e) => setReviewForm({ ...reviewForm, remarks: e.target.value })}
                   placeholder="Summarize the quality of the submitted work."
-                  className="w-full rounded-xl border border-slate-200 p-2.5"
+                  className="w-full rounded-xl border border-slate-200 bg-white p-3 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-50"
                 />
               </div>
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Improvements</label>
+                <label className="mb-1.5 block font-bold text-slate-700">Improvements</label>
                 <textarea
                   rows={3}
                   value={reviewForm.improvements}
                   onChange={(e) => setReviewForm({ ...reviewForm, improvements: e.target.value })}
                   placeholder="General improvements or guidance for the student."
-                  className="w-full rounded-xl border border-slate-200 p-2.5"
+                  className="w-full rounded-xl border border-slate-200 bg-white p-3 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-50"
                 />
               </div>
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Suggestions (one per line)</label>
+                <label className="mb-1.5 block font-bold text-slate-700">Suggestions (one per line)</label>
                 <textarea
                   rows={4}
                   value={reviewForm.suggestionsText}
                   onChange={(e) => setReviewForm({ ...reviewForm, suggestionsText: e.target.value })}
                   placeholder={"Add five recent research papers.\nImprove the comparison table."}
-                  className="w-full rounded-xl border border-slate-200 p-2.5"
+                  className="w-full rounded-xl border border-slate-200 bg-white p-3 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-50"
                 />
               </div>
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-4 sm:grid-cols-2">
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">Marks (max {reviewingSubmission?.allocated_marks}) *</label>
+                  <label className="mb-1.5 block font-bold text-slate-700">Marks (max {reviewingSubmission?.allocated_marks}) *</label>
                   <input
                     type="number"
                     min="0"
@@ -3357,11 +3518,11 @@ export default function RepositoryWorkspace() {
                     step="0.5"
                     value={reviewForm.marksAwarded}
                     onChange={(e) => setReviewForm({ ...reviewForm, marksAwarded: e.target.value })}
-                    className="w-full rounded-xl border border-slate-200 p-2.5"
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-3 outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-50"
                     required
                   />
                 </div>
-                <label className="flex items-center gap-2 self-end rounded-xl bg-slate-50 p-3 font-semibold text-slate-700">
+                <label className="flex items-center gap-2 self-end rounded-xl border border-slate-200 bg-white p-3 font-semibold text-slate-700">
                   <input
                     type="checkbox"
                     checked={reviewForm.marksVisibleToStudent}
@@ -3370,17 +3531,18 @@ export default function RepositoryWorkspace() {
                   Release marks to students
                 </label>
               </div>
-              <div className="flex justify-end gap-2 pt-3">
+              </div>
+              <div className="sticky bottom-0 -mx-5 mt-5 flex justify-end gap-2 border-t border-slate-100 bg-white/95 px-5 py-4 backdrop-blur sm:-mx-7 sm:px-7">
                 <button
                   type="button"
                   onClick={() => setReviewModalOpen(false)}
-                  className="rounded-xl px-4 py-2 font-semibold text-slate-600 hover:bg-slate-100"
+                  className="rounded-xl px-4 py-2.5 font-semibold text-slate-600 transition hover:bg-slate-100"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="rounded-xl bg-blue-600 px-5 py-2 font-semibold text-white hover:bg-blue-700"
+                  className="rounded-xl bg-blue-700 px-5 py-2.5 font-semibold text-white shadow-sm transition hover:bg-blue-800"
                 >
                   Save Review
                 </button>
@@ -3392,24 +3554,30 @@ export default function RepositoryWorkspace() {
 
       {/* Add Resource Modal */}
       {resourceModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
-          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="text-base font-bold text-slate-900">Add Research Resource</h3>
-              <button onClick={() => setResourceModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg overflow-hidden rounded-3xl border border-white/70 bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 bg-gradient-to-r from-blue-50 via-white to-indigo-50 px-6 py-5">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-700">Project library</span>
+                <h3 className="mt-1 text-lg font-bold text-[#102A63]">Add Research Resource</h3>
+                <p className="mt-1 text-xs text-slate-500">Share a reference file or link with this project team.</p>
+              </div>
+              <button type="button" aria-label="Close resource form" onClick={() => setResourceModalOpen(false)} className="rounded-xl p-2 text-slate-400 transition hover:bg-white hover:text-slate-700">
                 <X size={18} />
               </button>
             </div>
-            <form onSubmit={handleSaveResource} className="mt-4 space-y-3.5 text-xs">
+            <form onSubmit={handleSaveResource} className="space-y-4 p-6 text-xs">
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Resource Title *</label>
+                <label className="mb-1.5 block font-bold text-slate-700">
+                  Resource Title {resourceForm.file ? "(optional)" : "*"}
+                </label>
                 <input
                   type="text"
                   value={resourceForm.title}
                   onChange={(e) => setResourceForm({ ...resourceForm, title: e.target.value })}
-                  placeholder="e.g. Kaggle Benchmark Dataset, IEEE Paper PDF Link"
-                  className="w-full rounded-xl border border-slate-200 p-2.5"
-                  required
+                  placeholder="Name this paper, dataset, or reference"
+                  className="w-full rounded-xl border border-slate-200 bg-white p-3 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-50"
+                  required={!resourceForm.file}
                 />
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -3418,7 +3586,7 @@ export default function RepositoryWorkspace() {
                   <select
                     value={resourceForm.resourceType}
                     onChange={(e) => setResourceForm({ ...resourceForm, resourceType: e.target.value })}
-                    className="w-full rounded-xl border border-slate-200 p-2.5"
+                    className="w-full rounded-xl border border-slate-200 bg-white p-3 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-50"
                   >
                     {RESOURCE_TYPES.map((t) => (
                       <option key={t} value={t}>
@@ -3427,53 +3595,92 @@ export default function RepositoryWorkspace() {
                     ))}
                   </select>
                 </div>
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">Visibility</label>
-                  <select
-                    value={resourceForm.visibility}
-                    onChange={(e) => setResourceForm({ ...resourceForm, visibility: e.target.value })}
-                    className="w-full rounded-xl border border-slate-200 p-2.5"
-                  >
-                    <option value="PROJECT">Project Only</option>
-                    <option value="SHARED">Shared Library</option>
-                    <option value="PUBLIC">Public</option>
-                  </select>
+                <div className="flex items-end">
+                  <p className="w-full rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-3 font-semibold text-emerald-800">
+                    Visible to this project team only
+                  </p>
                 </div>
               </div>
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Resource URL *</label>
+                <label className="mb-1.5 block font-bold text-slate-700">Upload Resource File</label>
+                <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-dashed border-blue-200 bg-blue-50/60 p-4 transition hover:border-blue-400 hover:bg-blue-50">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-blue-700 shadow-sm">
+                    <FileText size={18} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-bold text-slate-800">
+                      {resourceForm.file ? resourceForm.file.name : "Choose a paper, PDF, photo, or material"}
+                    </span>
+                    <span className="mt-1 block text-[11px] text-slate-500">PDF, office files, images, CSV, text, ZIP · Up to 15 MB</span>
+                  </span>
+                  <input
+                    type="file"
+                    accept=".csv,.doc,.docx,.jpg,.jpeg,.pdf,.png,.ppt,.pptx,.txt,.xls,.xlsx,.zip"
+                    className="sr-only"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0] || null;
+                      const extension = file?.name.split(".").pop()?.toLowerCase();
+                      const fileType = {
+                        csv: "DATASET",
+                        doc: "DOC",
+                        docx: "DOCX",
+                        jpg: "IMAGE",
+                        jpeg: "IMAGE",
+                        pdf: "PDF",
+                        png: "IMAGE",
+                        xls: "DATASET",
+                        xlsx: "DATASET",
+                      }[extension] || "OTHER";
+                      setResourceForm({
+                        ...resourceForm,
+                        file,
+                        resourceType: file ? fileType : "LINK",
+                        title: !resourceForm.title && file
+                          ? file.name.replace(/\.[^.]+$/, "").slice(0, 180)
+                          : resourceForm.title,
+                      });
+                    }}
+                  />
+                </label>
+              </div>
+              <div>
+                <label className="mb-1.5 block font-bold text-slate-700">
+                  Resource URL <span className="font-normal text-slate-400">(optional if uploading a file)</span>
+                </label>
                 <input
                   type="url"
                   value={resourceForm.resourceUrl}
                   onChange={(e) => setResourceForm({ ...resourceForm, resourceUrl: e.target.value })}
                   placeholder="https://..."
-                  className="w-full rounded-xl border border-slate-200 p-2.5"
-                  required
+                  className="w-full rounded-xl border border-slate-200 bg-white p-3 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-50"
+                  required={!resourceForm.file}
                 />
               </div>
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Notes / Description</label>
+                <label className="mb-1.5 block font-bold text-slate-700">Notes / Description</label>
                 <textarea
                   rows={2}
                   value={resourceForm.notes}
                   onChange={(e) => setResourceForm({ ...resourceForm, notes: e.target.value })}
                   placeholder="Summary of contents or instructions..."
-                  className="w-full rounded-xl border border-slate-200 p-2.5"
+                  className="w-full rounded-xl border border-slate-200 bg-white p-3 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-50"
                 />
               </div>
-              <div className="flex justify-end gap-2 pt-3">
+              {resourceError && <p role="alert" className="rounded-xl bg-red-50 px-3 py-2.5 text-sm text-red-700">{resourceError}</p>}
+              <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
                 <button
                   type="button"
                   onClick={() => setResourceModalOpen(false)}
-                  className="rounded-xl px-4 py-2 font-semibold text-slate-600 hover:bg-slate-100"
+                  className="rounded-xl px-4 py-2.5 font-semibold text-slate-600 transition hover:bg-slate-100"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="rounded-xl bg-blue-600 px-5 py-2 font-semibold text-white hover:bg-blue-700"
+                  disabled={savingResource}
+                  className="rounded-xl bg-blue-700 px-5 py-2.5 font-semibold text-white shadow-sm transition hover:bg-blue-800 disabled:cursor-wait disabled:opacity-60"
                 >
-                  Save Resource
+                  {savingResource ? "Saving..." : "Save to Project"}
                 </button>
               </div>
             </form>

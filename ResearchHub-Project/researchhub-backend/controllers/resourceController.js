@@ -7,6 +7,36 @@ const {
 
 const RESOURCE_TYPES = ["PDF", "DOC", "DOCX", "IMAGE", "DATASET", "SOURCE_CODE", "PAPER", "TEMPLATE", "LINK", "OTHER"];
 const VISIBILITIES = ["PROJECT", "SHARED", "PUBLIC"];
+const extensionTypes = {
+  ".csv": "DATASET",
+  ".doc": "DOC",
+  ".docx": "DOCX",
+  ".jpeg": "IMAGE",
+  ".jpg": "IMAGE",
+  ".pdf": "PDF",
+  ".png": "IMAGE",
+  ".ppt": "OTHER",
+  ".pptx": "OTHER",
+  ".txt": "OTHER",
+  ".xls": "DATASET",
+  ".xlsx": "DATASET",
+  ".zip": "OTHER",
+};
+const extensionMimeTypes = {
+  ".csv": "text/csv",
+  ".doc": "application/msword",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".pdf": "application/pdf",
+  ".png": "image/png",
+  ".ppt": "application/vnd.ms-powerpoint",
+  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ".txt": "text/plain",
+  ".xls": "application/vnd.ms-excel",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ".zip": "application/zip",
+};
 
 const validUrl = (value) => {
   if (typeof value !== "string" || value.length > 2048) return null;
@@ -34,6 +64,7 @@ const listRepositoryResources = async (req, res) => {
     if (type && !RESOURCE_TYPES.includes(type)) return res.status(422).json({ message: "Invalid resource type." });
     const [resources] = await db.promise().execute(
       `SELECT resource.id, resource.title, resource.resource_type, resource.resource_url,
+              resource.file_name, (resource.file_data IS NOT NULL) AS has_file,
               resource.notes, resource.visibility, resource.created_at, resource.updated_at,
               uploader.id AS uploaded_by, uploader.name AS uploaded_by_name
        FROM resources resource
@@ -55,6 +86,7 @@ const listSharedResources = async (req, res) => {
   try {
     const [resources] = await db.promise().execute(
       `SELECT resource.id, resource.title, resource.resource_type, resource.resource_url,
+              resource.file_name, (resource.file_data IS NOT NULL) AS has_file,
               resource.notes, resource.visibility, resource.created_at,
               uploader.name AS uploaded_by_name, repository.name AS repository_name
        FROM resources resource
@@ -73,28 +105,78 @@ const listSharedResources = async (req, res) => {
 };
 
 const createResource = async (req, res) => {
-  const repositoryId = parsePositiveId(req.body.repositoryId);
-  const title = typeof req.body.title === "string" ? req.body.title.trim() : "";
-  const resourceType = typeof req.body.resourceType === "string" ? req.body.resourceType.toUpperCase() : "LINK";
-  const resourceUrl = validUrl(req.body.resourceUrl);
-  const notes = typeof req.body.notes === "string" ? req.body.notes.trim() : "";
-  const visibility = typeof req.body.visibility === "string" ? req.body.visibility.toUpperCase() : "PROJECT";
-  if (!repositoryId || !title || title.length > 180 || !RESOURCE_TYPES.includes(resourceType) || !resourceUrl || notes.length > 10000 || !VISIBILITIES.includes(visibility)) {
+  const body = req.body || {};
+  const repositoryId = parsePositiveId(body.repositoryId);
+  const file = req.file;
+  const fileName = file ? file.originalname.replace(/[\r\n]/g, "").slice(0, 255) : null;
+  const extension = file ? require("node:path").extname(fileName).toLowerCase() : "";
+  const title = (typeof body.title === "string" ? body.title.trim() : "") ||
+    (fileName ? fileName.slice(0, 180) : "");
+  const resourceType = file
+    ? (typeof body.resourceType === "string" && body.resourceType.toUpperCase() !== "LINK"
+      ? body.resourceType.toUpperCase()
+      : extensionTypes[extension])
+    : typeof body.resourceType === "string" ? body.resourceType.toUpperCase() : "LINK";
+  const resourceUrl = file ? "/api/resources/files/pending" : validUrl(body.resourceUrl);
+  const notes = typeof body.notes === "string" ? body.notes.trim() : "";
+  const visibility = "PROJECT";
+  if (!repositoryId || !title || title.length > 180 || !RESOURCE_TYPES.includes(resourceType) || !resourceUrl || notes.length > 10000 || (file && !extensionMimeTypes[extension])) {
     return res.status(422).json({ message: "Please provide valid resource details." });
   }
+  if (!file && !title) return res.status(422).json({ message: "Provide a resource title and upload a file or add a valid URL." });
   try {
     if (!(await canAccessRepository(repositoryId, req.user))) {
       return res.status(403).json({ message: "You do not have access to this project." });
     }
     const [result] = await db.promise().execute(
-      `INSERT INTO resources (repository_id, title, resource_type, resource_url, notes, visibility, uploaded_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [repositoryId, title, resourceType, resourceUrl, notes || null, visibility, req.user.id],
+      `INSERT INTO resources
+       (repository_id, title, resource_type, resource_url, file_name, mime_type, file_data, notes, visibility, uploaded_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        repositoryId,
+        title,
+        resourceType,
+        resourceUrl,
+        fileName,
+        file ? extensionMimeTypes[extension] : null,
+        file ? file.buffer : null,
+        notes || null,
+        visibility,
+        req.user.id,
+      ],
     );
+    if (file) {
+      const fileUrl = `/api/resources/files/${result.insertId}`;
+      await db.promise().execute("UPDATE resources SET resource_url = ? WHERE id = ?", [fileUrl, result.insertId]);
+    }
     return res.status(201).json({ message: "Resource saved.", resourceId: result.insertId });
   } catch (error) {
     console.error("Resource creation failed:", error);
     return res.status(500).json({ message: "Unable to save resource." });
+  }
+};
+
+const downloadResourceFile = async (req, res) => {
+  const resourceId = parsePositiveId(req.params.resourceId);
+  if (!resourceId) return res.status(400).json({ message: "Invalid resource ID." });
+  try {
+    const [rows] = await db.promise().execute(
+      `SELECT repository_id, file_name, mime_type, file_data
+       FROM resources WHERE id = ? AND file_data IS NOT NULL`,
+      [resourceId],
+    );
+    const resource = rows[0];
+    if (!resource) return res.status(404).json({ message: "Resource file not found." });
+    if (!(await canAccessRepository(resource.repository_id, req.user))) {
+      return res.status(403).json({ message: "You do not have access to this project resource." });
+    }
+    res.set("Cache-Control", "private, no-store");
+    res.type(resource.mime_type || "application/octet-stream");
+    res.attachment(resource.file_name || `resource-${resourceId}`);
+    return res.send(resource.file_data);
+  } catch (error) {
+    console.error("Resource file download failed:", error);
+    return res.status(500).json({ message: "Unable to download resource file." });
   }
 };
 
@@ -150,6 +232,7 @@ const deleteResource = async (req, res) => {
 module.exports = {
   createResource,
   deleteResource,
+  downloadResourceFile,
   listRepositoryResources,
   listSharedResources,
   updateResource,

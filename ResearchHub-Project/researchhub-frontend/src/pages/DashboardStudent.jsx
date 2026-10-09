@@ -452,7 +452,7 @@ export const DashboardStudent = () => {
           <SidebarItem
             icon={LayoutDashboard}
             label="Dashboard"
-            active={location.pathname === "/dashboard/student" && dashboardView === "dashboard"}
+            active={location.pathname === "/dashboard/student" && dashboardView === "dashboard" && location.hash !== "#repositories"}
             onClick={() => showDashboardView("dashboard")}
           />
           <SidebarItem
@@ -464,13 +464,13 @@ export const DashboardStudent = () => {
           <SidebarItem
             icon={FolderGit2}
             label="My Project"
-            active={location.pathname === "/dashboard/student" && dashboardView === "dashboard" && repositoryFilter !== "joined"}
+            active={location.pathname === "/dashboard/student" && dashboardView === "dashboard" && location.hash === "#repositories" && repositoryFilter !== "joined"}
             onClick={() => showRepositories("all")}
           />
           <SidebarItem
             icon={FolderGit2}
             label="Joined Project"
-            active={location.pathname === "/dashboard/student" && dashboardView === "dashboard" && repositoryFilter === "joined"}
+            active={location.pathname === "/dashboard/student" && dashboardView === "dashboard" && location.hash === "#repositories" && repositoryFilter === "joined"}
             onClick={() => showRepositories("joined")}
           />
           <SidebarItem icon={UserRound} label="Find Mentor" active={location.pathname === "/find-mentor"} onClick={() => navigateTo("/find-mentor")} />
@@ -951,6 +951,9 @@ export const DashboardStudent = () => {
                           String(milestone.effective_status || milestone.status).toUpperCase(),
                         ),
                     );
+                    const allMilestonesCompleted =
+                        Number(repository.milestone_count) > 0 &&
+                        Number(repository.completed_milestone_count) === Number(repository.milestone_count);
 
                     return (
                       <button
@@ -1002,19 +1005,13 @@ export const DashboardStudent = () => {
                         </span>
                         {repository.results_published_at ? (
                           <span className="mt-3 block rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
-                            <span className="block font-bold">Results published</span>
-                            {(repository.results_snapshot || []).map((result) => (
-                              <span key={result.milestoneId} className="mt-1 flex justify-between gap-3">
-                                <span className="truncate">M{result.milestoneNumber}: {result.milestoneTitle}</span>
-                                <span className="shrink-0 font-semibold">{result.awardedMarks} / {result.maximumMarks}</span>
-                              </span>
-                            ))}
+                            <span className="block font-bold">Result Published</span>
                           </span>
-                        ) : (
+                        ) : allMilestonesCompleted ? (
                           <span className="mt-3 block rounded-lg bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
                             Result will be published soon
                           </span>
-                        )}
+                        ) : null}
                         <span className="mt-auto flex items-center justify-between gap-2 pt-4 text-[10px] text-slate-500">
                           <span>
                             {repository.member_count} {Number(repository.member_count) === 1 ? "member" : "members"}

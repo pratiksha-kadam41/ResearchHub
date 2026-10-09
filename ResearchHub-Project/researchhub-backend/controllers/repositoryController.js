@@ -330,6 +330,13 @@ const getRepositories = async (req, res) => {
               result_publication.published_at AS results_published_at,
               result_publication.results_snapshot AS results_snapshot,
               (SELECT COUNT(*)
+               FROM milestones project_milestones
+               WHERE project_milestones.repository_id = r.id) AS milestone_count,
+              (SELECT COUNT(*)
+               FROM milestones completed_milestones
+               WHERE completed_milestones.repository_id = r.id
+                 AND completed_milestones.status IN ('APPROVED', 'COMPLETED')) AS completed_milestone_count,
+              (SELECT COUNT(*)
                FROM paper_sections ps
                LEFT JOIN paper_template_sections pts ON pts.id = ps.template_section_id
                WHERE ps.paper_id = paper.id AND (pts.id IS NULL OR pts.is_required = TRUE)) AS paper_section_count,

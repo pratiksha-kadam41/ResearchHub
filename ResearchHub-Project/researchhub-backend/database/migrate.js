@@ -148,6 +148,18 @@ async function migrate() {
     }
   };
 
+  await ensureColumns("student_profiles", [
+    ["research_areas", "TEXT NULL"],
+    ["previous_projects", "TEXT NULL"],
+    ["publications", "TEXT NULL"],
+    ["research_experience", "TEXT NULL"],
+  ]);
+  await ensureColumns("resources", [
+    ["file_name", "VARCHAR(255) NULL AFTER resource_url"],
+    ["mime_type", "VARCHAR(150) NULL AFTER file_name"],
+    ["file_data", "LONGBLOB NULL AFTER mime_type"],
+  ]);
+
   await ensureColumns("milestones", [
     ["order_no", "INT NOT NULL DEFAULT 0 AFTER created_by"],
     ["instructions", "TEXT NULL AFTER description"],

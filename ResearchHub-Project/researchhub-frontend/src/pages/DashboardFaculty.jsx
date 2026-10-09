@@ -4,6 +4,8 @@ import {
   Bell,
   BookOpen,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   ClipboardCheck,
   Eye,
   FolderKanban,
@@ -55,6 +57,7 @@ export const DashboardFaculty = () => {
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const [activeSection, setActiveSection] = React.useState("dashboard");
+  const [researchProjectsExpanded, setResearchProjectsExpanded] = React.useState(true);
 
   /* dashboard data */
   const [dashboard, setDashboard] = React.useState(null);
@@ -227,11 +230,23 @@ export const DashboardFaculty = () => {
   const pendingReviews = dashboard?.pendingReviews || [];
   const recentSubmissions = dashboard?.recentSubmissions || [];
   const recentFeedback = dashboard?.recentFeedback || [];
+  const researchTypeFilter = activeSection === "research-individual"
+    ? "individual"
+    : activeSection === "research-group"
+      ? "group"
+      : null;
+  const visibleProjects = researchTypeFilter
+    ? projects.filter((project) => String(project.research_type).toLowerCase() === researchTypeFilter)
+    : projects;
   const pageTitle = activeSection === "history"
     ? "Request history"
     : activeSection === "requests"
       ? "Guidance requests"
-      : "Faculty dashboard";
+      : activeSection === "research-individual"
+        ? "Individual Research Projects"
+        : activeSection === "research-group"
+          ? "Group Research Projects"
+          : "Faculty dashboard";
 
   /* ── render ── */
   if (loading) {
@@ -302,6 +317,47 @@ export const DashboardFaculty = () => {
               </button>
             );
           })}
+          <div>
+            <button
+              type="button"
+              aria-expanded={researchProjectsExpanded}
+              onClick={() => setResearchProjectsExpanded((expanded) => !expanded)}
+              className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition ${
+                activeSection.startsWith("research-")
+                  ? "bg-white/15 text-white"
+                  : "text-blue-100/70 hover:bg-white/10 hover:text-white"
+              }`}
+            >
+              <FolderKanban size={18} />
+              <span className="flex-1 text-left">Research Projects</span>
+              {researchProjectsExpanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+            </button>
+            {researchProjectsExpanded && (
+              <div className="ml-5 mt-1 space-y-1 border-l border-white/15 pl-3">
+                {[
+                  ["research-individual", "Individual Research Projects"],
+                  ["research-group", "Group Research Project"],
+                ].map(([section, label]) => (
+                  <button
+                    key={section}
+                    type="button"
+                    onClick={() => {
+                      setActiveSection(section);
+                      setSidebarOpen(false);
+                    }}
+                    aria-current={activeSection === section ? "page" : undefined}
+                    className={`w-full rounded-lg px-3 py-2 text-left text-xs font-medium transition ${
+                      activeSection === section
+                        ? "bg-white/15 text-white"
+                        : "text-blue-100/75 hover:bg-white/10 hover:text-white"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </nav>
         <div className="border-t border-white/10 px-3 py-4">
           <button
@@ -432,13 +488,13 @@ export const DashboardFaculty = () => {
             Faculty research portal
           </p>
           <h1 className="mt-2 text-3xl font-bold tracking-tight text-[#102A63]">
-            {activeSection === "dashboard"
-              ? `Welcome back, ${user?.name || "Professor"}`
-              : activeSection === "history" ? "Request history" : "Guidance requests"}
+            {activeSection === "dashboard" ? `Welcome back, ${user?.name || "Professor"}` : pageTitle}
           </h1>
           <p className="mt-2 text-sm text-slate-500">
             {activeSection === "dashboard"
               ? "Your accepted research repositories and project progress."
+              : activeSection.startsWith("research-")
+                ? "Browse accepted research repositories by project type."
               : activeSection === "history"
                 ? "Accepted and declined guidance requests."
                 : "Review student research proposals before responding."}
@@ -631,27 +687,41 @@ export const DashboardFaculty = () => {
         )}
 
         {/* ── accepted repositories on the main dashboard ── */}
-        {activeSection === "dashboard" && (
+        {["dashboard", "research-individual", "research-group"].includes(activeSection) && (
         <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:p-6">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h2 className="font-bold text-[#102A63]">Accepted repositories</h2>
-              <p className="mt-1 text-xs text-slate-500">Research repositories for which you accepted a guidance request.</p>
+              <h2 className="font-bold text-[#102A63]">
+                {researchTypeFilter
+                  ? pageTitle
+                  : "Accepted repositories"}
+              </h2>
+              <p className="mt-1 text-xs text-slate-500">
+                {researchTypeFilter
+                  ? `Accepted ${researchTypeFilter} research repositories.`
+                  : "Research repositories for which you accepted a guidance request."}
+              </p>
             </div>
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
               <Users size={19} />
             </span>
           </div>
 
-          {projects.length === 0 ? (
+          {visibleProjects.length === 0 ? (
             <div className="mt-6 rounded-xl bg-slate-50 px-4 py-10 text-center">
               <Users size={28} className="mx-auto text-slate-300" />
-              <p className="mt-3 text-sm font-semibold text-slate-700">No assigned projects yet</p>
-              <p className="mt-1 text-xs text-slate-500">Accepted guidance requests will appear here.</p>
+              <p className="mt-3 text-sm font-semibold text-slate-700">
+                {researchTypeFilter ? `No ${researchTypeFilter} projects yet` : "No assigned projects yet"}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                {researchTypeFilter
+                  ? `Accepted ${researchTypeFilter} research projects will appear here.`
+                  : "Accepted guidance requests will appear here."}
+              </p>
             </div>
           ) : (
             <div className="mt-5 grid gap-3 md:grid-cols-2">
-              {projects.map((project) => (
+              {visibleProjects.map((project) => (
                 <article
                   key={project.id}
                   className="rounded-xl border border-slate-200 p-4 transition hover:border-blue-300 hover:bg-blue-50/30"

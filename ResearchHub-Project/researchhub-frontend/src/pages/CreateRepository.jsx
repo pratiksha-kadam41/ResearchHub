@@ -3,22 +3,15 @@ import {
   ArrowLeft,
   ArrowRight,
   BookOpen,
-  CalendarDays,
   Check,
-  ChevronDown,
-  ChevronRight,
   FolderGit2,
   Globe2,
-  HelpCircle,
-  History,
   LayoutDashboard,
-  ListChecks,
   Lock,
   LogOut,
   LoaderCircle,
   Menu,
-  MessageSquare,
-  Settings,
+  Plus,
   Users,
   UserRound,
   X,
@@ -33,7 +26,6 @@ export default function CreateRepository() {
   const location = useLocation();
   const { token, user, logout } = useAuth();
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
-  const [expandedGroup, setExpandedGroup] = React.useState("projects");
 
   const [form, setForm] = React.useState(location.state?.repositoryData || {
     name: "",
@@ -209,47 +201,30 @@ export default function CreateRepository() {
           </button>
           <button
             type="button"
-            aria-expanded={expandedGroup === "projects"}
-            onClick={() => setExpandedGroup((current) => current === "projects" ? "" : "projects")}
+            onClick={() => setSidebarOpen(false)}
+            aria-current="page"
             className="flex w-full items-center gap-3 rounded-xl bg-white/15 px-4 py-2.5 text-sm font-medium text-white"
           >
-            <FolderGit2 size={18} />
-            <span className="flex-1 text-left">My Projects</span>
-            {expandedGroup === "projects" ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+            <Plus size={18} />
+            Create Project
           </button>
-          {expandedGroup === "projects" && (
-            <div className="ml-5 space-y-1 border-l border-white/15 pl-3">
-              <button type="button" onClick={() => navigate("/dashboard/student#repositories")} className="w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-blue-100/75 transition hover:bg-white/10 hover:text-white">
-                All Repositories
-              </button>
-              <button type="button" onClick={() => setSidebarOpen(false)} className="w-full rounded-lg bg-white/15 px-3 py-2 text-left text-xs font-semibold text-white">
-                Create Project
-              </button>
-              <button type="button" onClick={() => navigate("/dashboard/student?filter=joined#repositories")} className="w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-blue-100/75 transition hover:bg-white/10 hover:text-white">
-                Joined Projects
-              </button>
-            </div>
-          )}
-          {[
-            ["Milestones", CalendarDays, "/dashboard/student?view=milestones"],
-            ["Tasks", ListChecks, "/tasks"],
-            ["Find Mentor", UserRound, "/find-mentor"],
-            ["Resources", FolderGit2, "/shared-library"],
-            ["Research History", History, "/dashboard/student?view=research-history"],
-            ["Discussions", MessageSquare, "/dashboard/student?view=discussions"],
-            ["Profile", UserRound, "/complete-profile?edit=true"],
-            ["Settings", Settings, "/complete-profile?edit=true"],
-          ].map(([label, Icon, path]) => (
-            <button key={label} type="button" onClick={() => navigate(path)} className="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium text-blue-100/75 transition hover:bg-white/10 hover:text-white">
-              <Icon size={18} />
-              {label}
-            </button>
-          ))}
+          <button type="button" onClick={() => navigate("/dashboard/student#repositories")} className="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium text-blue-100/75 transition hover:bg-white/10 hover:text-white">
+            <FolderGit2 size={18} />
+            My Project
+          </button>
+          <button type="button" onClick={() => navigate("/dashboard/student?filter=joined#repositories")} className="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium text-blue-100/75 transition hover:bg-white/10 hover:text-white">
+            <FolderGit2 size={18} />
+            Joined Project
+          </button>
+          <button type="button" onClick={() => navigate("/find-mentor")} className="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium text-blue-100/75 transition hover:bg-white/10 hover:text-white">
+            <UserRound size={18} />
+            Find Mentor
+          </button>
         </nav>
         <div className="border-t border-white/10 px-3 py-4">
-          <button type="button" onClick={() => navigate("/help")} className="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm text-blue-100/70 transition hover:bg-white/10 hover:text-white">
-            <HelpCircle size={18} />
-            Help
+          <button type="button" onClick={() => navigate("/complete-profile?edit=true")} className="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm text-blue-100/70 transition hover:bg-white/10 hover:text-white">
+            <UserRound size={18} />
+            Profile
           </button>
           <button type="button" onClick={() => { logout(); navigate("/login"); }} className="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm text-blue-100/70 transition hover:bg-red-500/10 hover:text-red-300">
             <LogOut size={18} />

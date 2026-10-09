@@ -1,15 +1,19 @@
 import React from "react";
 import {
-  ArrowLeft,
   BookOpen,
   Briefcase,
   CheckCircle2,
   FolderGit2,
+  LayoutDashboard,
   Loader2,
   LoaderCircle,
+  LogOut,
+  Menu,
+  Plus,
   Search,
   Send,
   User,
+  UserRound,
   X,
   MapPin,
 } from "lucide-react";
@@ -27,9 +31,10 @@ function Badge({ text }) {
 
 /* ── component ─────────────────────────────────────────────── */
 export default function FindMentor() {
-  const { token, user } = useAuth();
+  const { token, user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const fixedRepositoryId = location.state?.repositoryId
     ? String(location.state.repositoryId)
     : "";
@@ -110,6 +115,16 @@ export default function FindMentor() {
     if (e.key === "Enter") doSearch();
   };
 
+  const navigateTo = (path) => {
+    setSidebarOpen(false);
+    navigate(path);
+  };
+
+  const handleLogout = () => {
+    logout();
+    navigate("/login");
+  };
+
   /* ── open request modal ── */
   const openModal = (fac) => {
     setSelected(fac);
@@ -163,30 +178,103 @@ export default function FindMentor() {
 
   /* ── render ── */
   return (
-    <div className="min-h-screen bg-[#F5F8FC]">
+    <div className="min-h-screen bg-[#F5F8FC] text-slate-900">
+      {sidebarOpen && (
+        <button
+          type="button"
+          aria-label="Close navigation"
+          onClick={() => setSidebarOpen(false)}
+          className="fixed inset-0 z-40 bg-slate-950/50 lg:hidden"
+        />
+      )}
 
-      {/* header */}
-      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-5 lg:px-8">
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 flex w-[250px] flex-col bg-gradient-to-b from-[#071A46] via-[#0B2B72] to-[#123C83] text-white transition-transform duration-300 ${
+          sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+        }`}
+      >
+        <div className="flex items-center gap-3 px-6 py-7">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10">
+            <BookOpen size={23} />
+          </span>
+          <h1 className="text-xl font-bold">
+            Research<span className="text-blue-300">Hub</span>
+          </h1>
+        </div>
+        <button
+          type="button"
+          aria-label="Close navigation"
+          onClick={() => setSidebarOpen(false)}
+          className="absolute right-4 top-5 text-blue-200 lg:hidden"
+        >
+          <X size={20} />
+        </button>
+        <nav className="student-sidebar-nav flex-1 space-y-1 overflow-y-auto px-3" aria-label="Student navigation">
+          {[
+            ["Dashboard", LayoutDashboard, "/dashboard/student"],
+            ["Create Project", Plus, "/repository/create"],
+            ["My Project", FolderGit2, "/dashboard/student#repositories"],
+            ["Joined Project", FolderGit2, "/dashboard/student?filter=joined#repositories"],
+            ["Find Mentor", UserRound, "/find-mentor"],
+          ].map(([label, Icon, path]) => (
+            <button
+              key={label}
+              type="button"
+              aria-current={label === "Find Mentor" ? "page" : undefined}
+              onClick={() => navigateTo(path)}
+              className={`flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium transition ${
+                label === "Find Mentor"
+                  ? "bg-white/15 text-white"
+                  : "text-blue-100/70 hover:bg-white/10 hover:text-white"
+              }`}
+            >
+              <Icon size={18} />
+              <span className="flex-1 text-left">{label}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="border-t border-white/10 px-3 py-4">
           <button
             type="button"
-            onClick={() => navigate("/dashboard/student")}
-            className="flex items-center gap-2 text-sm font-semibold text-slate-600 transition hover:text-blue-600"
+            onClick={() => navigateTo("/complete-profile?edit=true")}
+            className="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm text-blue-100/70 transition hover:bg-white/10 hover:text-white"
           >
-            <ArrowLeft size={17} />
-            Back to dashboard
+            <UserRound size={18} />
+            Profile
           </button>
-          <div className="flex items-center gap-2">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#0B285F] text-white">
-              <BookOpen size={18} />
-            </span>
-            <span className="font-bold tracking-tight text-[#102A63]">ResearchHub</span>
-          </div>
-          <div className="w-32" />
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm text-blue-100/70 transition hover:bg-red-500/10 hover:text-red-300"
+          >
+            <LogOut size={18} />
+            Logout
+          </button>
         </div>
-      </header>
+      </aside>
 
-      <main className="mx-auto max-w-7xl px-5 py-8 lg:px-8">
+      <main className="min-h-screen lg:ml-[250px]">
+        <header className="sticky top-0 z-30 flex h-[72px] items-center justify-between bg-white px-5 shadow-sm lg:px-8">
+          <div className="flex min-w-0 items-center gap-4">
+            <button
+              type="button"
+              aria-label="Open navigation"
+              onClick={() => setSidebarOpen(true)}
+              className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 lg:hidden"
+            >
+              <Menu size={20} />
+            </button>
+            <div className="min-w-0">
+              <h1 className="truncate text-base font-bold text-[#102A63] lg:text-lg">Find a faculty collaborator</h1>
+              <p className="hidden text-xs text-slate-400 sm:block">Connect with faculty for your research project</p>
+            </div>
+          </div>
+          <span className="hidden rounded-full bg-blue-50 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-blue-700 sm:inline-flex">
+            Collaboration
+          </span>
+        </header>
+
+      <div className="mx-auto max-w-7xl px-5 py-8 lg:px-8">
 
         {/* heading */}
         <div className="mb-6">
@@ -213,7 +301,7 @@ export default function FindMentor() {
           <button
             type="button"
             onClick={doSearch}
-            className="rounded-xl bg-[#0B285F] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#123C83]"
+            className="rounded-xl bg-blue-700 px-5 py-3 text-sm font-bold text-white transition hover:bg-blue-800"
           >
             Search
           </button>
@@ -312,6 +400,7 @@ export default function FindMentor() {
             ))}
           </div>
         )}
+      </div>
       </main>
 
       {profileSelected && (
