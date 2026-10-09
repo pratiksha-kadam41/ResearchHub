@@ -17,6 +17,10 @@ const {
   saveRepositoryDocument,
   updateRepository,
 } = require("../controllers/repositoryController");
+const {
+  getProjectResults,
+  publishProjectResults,
+} = require("../controllers/projectResultController");
 
 const router = express.Router();
 
@@ -36,9 +40,11 @@ router.post(
   authMiddleware,
   acceptRepositoryInvitation,
 );
-router.post("/invitations/:token/reject", rejectRepositoryInvitation);
+router.post("/invitations/:token/reject", authMiddleware, rejectRepositoryInvitation);
 router.get("/:repositoryId/documents", authMiddleware, getRepositoryDocuments);
 router.post("/:repositoryId/documents", authMiddleware, saveRepositoryDocument);
+router.get("/:repositoryId/results", authMiddleware, getProjectResults);
+router.post("/:repositoryId/results/publish", authMiddleware, publishProjectResults);
 router.put(
   "/:repositoryId/documents/:documentId",
   authMiddleware,

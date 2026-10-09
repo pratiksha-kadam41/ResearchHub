@@ -2,34 +2,24 @@ import React from "react";
 import {
   BookOpen,
   Bell,
+  CalendarDays,
   CheckCircle2,
   FolderGit2,
-  FolderKanban,
-  HelpCircle,
+  History,
   LayoutDashboard,
   Loader2,
   LogOut,
+  MessageSquare,
   Menu,
   Pencil,
   Plus,
   Search,
-  Settings,
   UserRound,
-  Users,
   X,
   XCircle,
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import NotificationBell from "../components/NotificationBell";
-
-const navigationItems = [
-  { label: "Dashboard", icon: LayoutDashboard, path: "/dashboard/student" },
-  { label: "Create Project", icon: Plus, path: "/repository/create" },
-  { label: "Find Mentor", icon: UserRound, path: "/find-mentor" },
-  { label: "My Tasks", icon: LayoutDashboard, path: "/tasks" },
-  { label: "Shared Library", icon: FolderGit2, path: "/shared-library" },
-];
 
 function SidebarItem({ icon: Icon, label, active, onClick }) {
   return (
@@ -48,18 +38,6 @@ function SidebarItem({ icon: Icon, label, active, onClick }) {
   );
 }
 
-function SummaryCard({ icon: Icon, label, value }) {
-  return (
-    <div className="rounded-2xl bg-white p-5 shadow-sm">
-      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
-        <Icon size={20} />
-      </div>
-      <p className="mt-4 text-2xl font-bold text-[#102A63]">{value}</p>
-      <p className="mt-1 text-xs text-slate-500">{label}</p>
-    </div>
-  );
-}
-
 export const DashboardStudent = () => {
   const { user, token, logout } = useAuth();
   const navigate = useNavigate();
@@ -70,6 +48,9 @@ export const DashboardStudent = () => {
   const [repositories, setRepositories] = React.useState([]);
   const [repositorySearch, setRepositorySearch] = React.useState("");
   const [repositoryFilter, setRepositoryFilter] = React.useState("all");
+  const [milestones, setMilestones] = React.useState([]);
+  const [milestonesLoading, setMilestonesLoading] = React.useState(false);
+  const [milestonesError, setMilestonesError] = React.useState("");
   const [repositoriesLoading, setRepositoriesLoading] = React.useState(true);
   const [repositoriesError, setRepositoriesError] = React.useState("");
   const [profile, setProfile] = React.useState(null);
@@ -86,8 +67,15 @@ export const DashboardStudent = () => {
     Boolean(location.state?.repositoryCreated),
   );
   const [alertMessage, setAlertMessage] = React.useState(
-    location.state?.repositoryCreated ? "Repository created successfully" : "",
+    location.state?.alertMessage || (location.state?.repositoryCreated ? "Repository created successfully" : ""),
   );
+  const dashboardView = new URLSearchParams(location.search).get("view") || "dashboard";
+
+  React.useEffect(() => {
+    if (["milestones", "milestone-history"].includes(dashboardView)) {
+      navigate("/dashboard/student", { replace: true });
+    }
+  }, [dashboardView, navigate]);
 
   React.useEffect(() => {
     if (!token) {
@@ -162,6 +150,77 @@ export const DashboardStudent = () => {
   }, [token]);
 
   React.useEffect(() => {
+    if (!token || !["milestones", "milestone-history", "research-history"].includes(dashboardView)) {
+      return undefined;
+    }
+    if (repositoriesLoading) return undefined;
+
+    let active = true;
+    const loadMilestones = async () => {
+      setMilestonesLoading(true);
+      setMilestonesError("");
+      try {
+        const results = await Promise.all(
+          repositories.map(async (repository) => {
+            const response = await fetch(`/api/milestones/repository/${repository.id}`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            const result = await response.json();
+            if (!response.ok) {
+              throw new Error(result.message || `Unable to load milestones for ${repository.name}.`);
+            }
+            return (result.milestones || []).map((milestone) => ({
+              ...milestone,
+              repository_id: repository.id,
+              repository_name: repository.name,
+            }));
+          }),
+        );
+        if (active) setMilestones(results.flat());
+      } catch (error) {
+        console.error("Student milestone list error:", error);
+        if (active) setMilestonesError(error.message || "Unable to load milestones.");
+      } finally {
+        if (active) setMilestonesLoading(false);
+      }
+    };
+
+    loadMilestones();
+    return () => {
+      active = false;
+    };
+  }, [dashboardView, repositories, repositoriesLoading, token]);
+
+  React.useEffect(() => {
+    if (!token || dashboardView !== "dashboard" || repositoriesLoading) {
+      return undefined;
+    }
+    let active = true;
+    const loadSubmissionFeedback = async () => {
+      try {
+        const results = await Promise.all(repositories.map(async (repository) => {
+          const response = await fetch(`/api/submissions/repository/${repository.id}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const result = await response.json();
+          if (!response.ok) {
+            throw new Error(result.message || `Unable to load submissions for ${repository.name}.`);
+          }
+          return result.submissions || [];
+        }));
+        if (active) setMilestoneSubmissions(results.flat());
+      } catch (error) {
+        console.error("Student milestone feedback load error:", error);
+        if (active) setMilestonesError(error.message || "Unable to load milestone feedback.");
+      }
+    };
+    loadSubmissionFeedback();
+    return () => {
+      active = false;
+    };
+  }, [dashboardView, repositories, repositoriesLoading, token]);
+
+  React.useEffect(() => {
     if (!location.state?.repositoryCreated) {
       return undefined;
     }
@@ -174,13 +233,13 @@ export const DashboardStudent = () => {
     return () => window.clearTimeout(timeout);
   }, [location.key, location.pathname, location.state?.repositoryCreated, navigate]);
 
+  React.useEffect(() => {
+    if (location.pathname === "/dashboard/student" && location.hash === "#repositories") {
+      document.getElementById("student-repositories")?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [location.hash, location.pathname]);
+
   const name = student?.name || student?.fullName || student?.username || "Student";
-  const individualCount = repositories.filter(
-    (repository) => repository.research_type === "individual",
-  ).length;
-  const groupCount = repositories.filter(
-    (repository) => repository.research_type === "group",
-  ).length;
   const visibleRepositories = repositories.filter((repository) => {
     const query = repositorySearch.trim().toLowerCase();
     const matchesSearch = !query || [
@@ -192,7 +251,8 @@ export const DashboardStudent = () => {
     const matchesFilter = repositoryFilter === "all"
       || (repositoryFilter === "group" && repository.research_type === "group")
       || (repositoryFilter === "individual" && repository.research_type === "individual")
-      || (repositoryFilter === "collaboration" && repository.guidance_request_status);
+      || (repositoryFilter === "collaboration" && repository.guidance_request_status)
+      || (repositoryFilter === "joined" && Number(repository.owner_id) !== Number(student?.id));
     return matchesSearch && matchesFilter;
   });
   const initials = name
@@ -205,6 +265,17 @@ export const DashboardStudent = () => {
   const navigateTo = (path) => {
     setSidebarOpen(false);
     navigate(path);
+  };
+
+  const showRepositories = (filter) => {
+    setRepositoryFilter(filter);
+    setSidebarOpen(false);
+    navigate("/dashboard/student#repositories");
+  };
+
+  const showDashboardView = (view) => {
+    setSidebarOpen(false);
+    navigate(view === "dashboard" ? "/dashboard/student" : `/dashboard/student?view=${view}`);
   };
 
   const handleLogout = () => {
@@ -293,6 +364,7 @@ export const DashboardStudent = () => {
   };
 
   const openProfile = async () => {
+    setSidebarOpen(false);
     setProfileOpen(true);
     setProfileError("");
     if (profile || !token) return;
@@ -376,23 +448,35 @@ export const DashboardStudent = () => {
         >
           <X size={20} />
         </button>
-        <nav className="flex-1 space-y-1 overflow-y-auto px-3">
-          {navigationItems.map((item) => (
-            <SidebarItem
-              key={item.label}
-              icon={item.icon}
-              label={item.label}
-              active={location.pathname === item.path}
-              onClick={() => navigateTo(item.path)}
-            />
-          ))}
+        <nav className="student-sidebar-nav flex-1 space-y-1 overflow-y-auto px-3" aria-label="Student navigation">
+          <SidebarItem
+            icon={LayoutDashboard}
+            label="Dashboard"
+            active={location.pathname === "/dashboard/student" && dashboardView === "dashboard"}
+            onClick={() => showDashboardView("dashboard")}
+          />
+          <SidebarItem
+            icon={Plus}
+            label="Create Project"
+            active={location.pathname === "/repository/create"}
+            onClick={() => navigateTo("/repository/create")}
+          />
+          <SidebarItem
+            icon={FolderGit2}
+            label="My Project"
+            active={location.pathname === "/dashboard/student" && dashboardView === "dashboard" && repositoryFilter !== "joined"}
+            onClick={() => showRepositories("all")}
+          />
+          <SidebarItem
+            icon={FolderGit2}
+            label="Joined Project"
+            active={location.pathname === "/dashboard/student" && dashboardView === "dashboard" && repositoryFilter === "joined"}
+            onClick={() => showRepositories("joined")}
+          />
+          <SidebarItem icon={UserRound} label="Find Mentor" active={location.pathname === "/find-mentor"} onClick={() => navigateTo("/find-mentor")} />
         </nav>
         <div className="border-t border-white/10 px-3 py-4">
-          <SidebarItem
-            icon={HelpCircle}
-            label="Help"
-            onClick={() => navigateTo("/help")}
-          />
+          <SidebarItem icon={UserRound} label="Profile" onClick={openProfile} />
           <button
             type="button"
             onClick={handleLogout}
@@ -537,7 +621,7 @@ export const DashboardStudent = () => {
                 Student Research Portal
               </p>
               <h1 className="mt-1 text-2xl font-bold text-[#102A63] lg:text-3xl">
-                Research Dashboard
+                My Research Projects
               </h1>
             </div>
             <button
@@ -546,7 +630,7 @@ export const DashboardStudent = () => {
               className="flex items-center justify-center gap-2 rounded-xl bg-[#0B285F] px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-[#123C83]"
             >
               <Plus size={16} />
-              Create Repository
+              Create Project
             </button>
           </div>
 
@@ -561,23 +645,121 @@ export const DashboardStudent = () => {
             </p>
           )}
 
-          <section className="mb-6 grid gap-4 sm:grid-cols-3">
-            <SummaryCard
-              icon={FolderKanban}
-              label="My repositories"
-              value={repositoriesLoading && token ? "…" : !token || repositoriesError ? "—" : repositories.length}
-            />
-            <SummaryCard
-              icon={FolderGit2}
-              label="Individual research"
-              value={repositoriesLoading && token ? "…" : !token || repositoriesError ? "—" : individualCount}
-            />
-            <SummaryCard
-              icon={Users}
-              label="Group research"
-              value={repositoriesLoading && token ? "…" : !token || repositoriesError ? "—" : groupCount}
-            />
-          </section>
+          {dashboardView !== "dashboard" && (
+            <section className="mb-6 rounded-2xl border border-blue-100 bg-white p-5 shadow-sm lg:p-6">
+              <div className="mb-4 flex items-center gap-3">
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
+                  {dashboardView.includes("milestone") ? <CalendarDays size={20} /> : dashboardView === "research-history" ? <History size={20} /> : <MessageSquare size={20} />}
+                </span>
+                <div>
+                  <h2 className="font-bold text-[#102A63]">
+                    {{
+                      milestones: "My Milestones",
+                      "milestone-history": "Milestone History",
+                      "research-history": "Research History",
+                      discussions: "Discussions",
+                    }[dashboardView] || "Research"}
+                  </h2>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {dashboardView === "milestones" && "Milestones across repositories shared with you by your faculty."}
+                    {dashboardView === "milestone-history" && "Completed milestones from your research repositories."}
+                    {dashboardView === "research-history" && "Your repositories and completed research milestones."}
+                    {dashboardView === "discussions" && "Choose a repository to open its shared discussion space."}
+                  </p>
+                </div>
+              </div>
+              {["milestones", "milestone-history"].includes(dashboardView) ? (
+                milestonesLoading || repositoriesLoading ? (
+                  <div className="flex items-center gap-2 py-6 text-sm text-slate-500">
+                    <Loader2 size={17} className="animate-spin text-blue-600" />
+                    Loading milestone history…
+                  </div>
+                ) : milestonesError ? (
+                  <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{milestonesError}</p>
+                ) : (() => {
+                  const completedStatuses = ["COMPLETED", "APPROVED"];
+                  const matchingMilestones = milestones.filter((milestone) => {
+                    const completed = completedStatuses.includes(String(milestone.effective_status || milestone.status).toUpperCase());
+                    return dashboardView === "milestone-history" ? completed : !completed;
+                  });
+                  return matchingMilestones.length ? (
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      {matchingMilestones.map((milestone) => (
+                        <button
+                          key={milestone.id}
+                          type="button"
+                          onClick={() => navigate(`/repository/${milestone.repository_id}?tab=milestones`)}
+                          className="rounded-xl border border-slate-200 p-4 text-left transition hover:border-blue-300 hover:bg-blue-50/40"
+                        >
+                          <span className="flex items-center justify-between gap-3">
+                            <span className="truncate text-sm font-bold text-[#102A63]">{milestone.title}</span>
+                            <span className="shrink-0 rounded-full bg-blue-50 px-2.5 py-1 text-[10px] font-semibold text-blue-700">
+                              {milestone.effective_status || milestone.status}
+                            </span>
+                          </span>
+                          <span className="mt-2 block text-xs text-slate-500">{milestone.repository_name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="rounded-xl bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                      {dashboardView === "milestone-history" ? "No completed milestones yet." : "There are no milestones to show yet."}
+                    </p>
+                  );
+                })()
+              ) : dashboardView === "research-history" ? (
+                <div className="space-y-2">
+                  {milestonesError && (
+                    <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{milestonesError}</p>
+                  )}
+                  {repositoriesLoading ? (
+                    <div className="flex items-center gap-2 py-6 text-sm text-slate-500">
+                      <Loader2 size={17} className="animate-spin text-blue-600" />
+                      Loading research history…
+                    </div>
+                  ) : repositories.length === 0 && milestones.length === 0 ? (
+                    <p className="text-sm text-slate-500">No research history yet.</p>
+                  ) : (
+                    <>
+                      {repositories.map((repository) => (
+                        <button key={repository.id} type="button" onClick={() => navigate(`/repository/${repository.id}`)} className="flex w-full items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-left hover:border-blue-300">
+                          <span className="font-semibold text-slate-700">{repository.name}</span>
+                          <span className="text-xs text-slate-500">Created {new Date(repository.created_at).toLocaleDateString()}</span>
+                        </button>
+                      ))}
+                      {milestones.filter((milestone) => ["COMPLETED", "APPROVED"].includes(String(milestone.effective_status || milestone.status).toUpperCase())).map((milestone) => (
+                        <button key={`history-${milestone.id}`} type="button" onClick={() => navigate(`/repository/${milestone.repository_id}?tab=milestones`)} className="flex w-full items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-left hover:border-blue-300">
+                          <span>
+                            <span className="block font-semibold text-slate-700">{milestone.title}</span>
+                            <span className="mt-1 block text-xs text-slate-500">{milestone.repository_name}</span>
+                          </span>
+                          <span className="text-xs text-slate-500">Completed</span>
+                        </button>
+                      ))}
+                    </>
+                  )}
+                </div>
+              ) : dashboardView === "discussions" ? (
+                <div className="space-y-2">
+                  {repositoriesLoading ? (
+                    <div className="flex items-center gap-2 py-6 text-sm text-slate-500">
+                      <Loader2 size={17} className="animate-spin text-blue-600" />
+                      Loading repositories…
+                    </div>
+                  ) : repositoriesError ? (
+                    <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{repositoriesError}</p>
+                  ) : repositories.length === 0 ? (
+                    <p className="text-sm text-slate-500">Join or create a repository to access its discussions.</p>
+                  ) : repositories.map((repository) => (
+                    <button key={repository.id} type="button" onClick={() => navigate(`/repository/${repository.id}?tab=discussions`)} className="flex w-full items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-left hover:border-blue-300">
+                      <span className="font-semibold text-slate-700">{repository.name}</span>
+                      <span className="text-xs font-semibold text-blue-700">Open discussion</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </section>
+          )}
 
           {/* ── Pending invitations ─────────────────────────────── */}
           {(invitationsLoading || invitations.length > 0) && (
@@ -611,12 +793,17 @@ export const DashboardStudent = () => {
                             {inv.repository_name}
                           </p>
                           <p className="mt-0.5 text-xs text-slate-500">
-                            <span className="font-medium text-slate-600">{inv.inviter_name}</span>
+                            <span className="font-medium text-slate-600">{inv.owner_name || inv.inviter_name}</span>
                             {" invited you · "}
                             {inv.domain}
                             {" · "}
                             {inv.research_type === "group" ? "Group" : "Individual"} research
                           </p>
+                          {inv.repository_description && (
+                            <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">
+                              {inv.repository_description}
+                            </p>
+                          )}
                         </div>
                         <div className="flex shrink-0 gap-2">
                           <button
@@ -655,12 +842,12 @@ export const DashboardStudent = () => {
           )}
 
           {/* ── Repositories ────────────────────────────────────── */}
-          <section className="rounded-2xl bg-white p-5 shadow-sm lg:p-6">
+          <section id="student-repositories" className="rounded-2xl bg-white p-5 shadow-sm lg:p-6">
             <div className="mb-5 flex items-center justify-between gap-3">
               <div>
-                <h2 className="font-bold text-[#102A63]">My repositories</h2>
+                <h2 className="font-bold text-[#102A63]">My Projects</h2>
                 <p className="mt-1 text-xs text-slate-500">
-                  Repositories you own or have joined.
+                  Projects you own or have joined.
                 </p>
               </div>
               <FolderGit2 size={20} className="text-blue-600" />
@@ -683,6 +870,7 @@ export const DashboardStudent = () => {
                   {[
                     ["all", "All repositories"],
                     ["collaboration", "With faculty requests"],
+                    ["joined", "Joined projects"],
                     ["group", "Group research"],
                     ["individual", "Individual research"],
                   ].map(([filter, label]) => (
@@ -750,12 +938,25 @@ export const DashboardStudent = () => {
                       REJECTED: "Request declined",
                       NOT_REQUESTED: "No faculty request",
                     };
+                    const paperCompletion = Number(repository.paper_section_count)
+                      ? Math.round(
+                          (Number(repository.paper_completed_section_count || 0) /
+                            Number(repository.paper_section_count)) * 100,
+                        )
+                      : 0;
+                    const projectNextMilestone = milestones.find(
+                      (milestone) =>
+                        Number(milestone.repository_id) === Number(repository.id) &&
+                        !["APPROVED", "COMPLETED"].includes(
+                          String(milestone.effective_status || milestone.status).toUpperCase(),
+                        ),
+                    );
 
                     return (
                       <button
                         key={repository.id}
                         type="button"
-                        onClick={() => navigate(`/repository/${repository.id}`)}
+                        onClick={() => navigate(`/repository/${repository.id}${repository.results_published_at ? "?tab=results" : ""}`)}
                         className="group flex min-h-52 flex-col rounded-xl border border-slate-200 bg-white p-4 text-left transition hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-300"
                       >
                         <span className="flex w-full items-center justify-between gap-2">
@@ -768,6 +969,9 @@ export const DashboardStudent = () => {
                         </span>
                         <span className="mt-3 block truncate text-sm font-bold text-slate-800 group-hover:text-blue-800">
                           {repository.name}
+                        </span>
+                        <span className="mt-1 block text-[10px] font-medium text-slate-500">
+                          Owner: {repository.owner_name || "Student"}
                         </span>
                         {repository.faculty_collaborator_name && (
                           <span className="mt-1 block text-xs font-semibold text-emerald-700">
@@ -782,12 +986,41 @@ export const DashboardStudent = () => {
                             {repository.description}
                           </span>
                         )}
+                        <span className="mt-3 grid gap-1.5 rounded-lg bg-slate-50 px-3 py-2 text-[10px] text-slate-600">
+                          <span className="flex items-center justify-between gap-2">
+                            <span className="font-semibold text-slate-700">Research paper</span>
+                            <span className="font-semibold text-blue-700">
+                              {repository.research_paper_id ? `${paperCompletion}% complete` : "Not started"}
+                            </span>
+                          </span>
+                          <span className="h-1 overflow-hidden rounded-full bg-slate-200">
+                            <span className="block h-full rounded-full bg-blue-600" style={{ width: `${paperCompletion}%` }} />
+                          </span>
+                          <span className="truncate">
+                            Next milestone: {projectNextMilestone?.title || (repository.research_paper_id ? "All milestones approved" : "Not scheduled")}
+                          </span>
+                        </span>
+                        {repository.results_published_at ? (
+                          <span className="mt-3 block rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                            <span className="block font-bold">Results published</span>
+                            {(repository.results_snapshot || []).map((result) => (
+                              <span key={result.milestoneId} className="mt-1 flex justify-between gap-3">
+                                <span className="truncate">M{result.milestoneNumber}: {result.milestoneTitle}</span>
+                                <span className="shrink-0 font-semibold">{result.awardedMarks} / {result.maximumMarks}</span>
+                              </span>
+                            ))}
+                          </span>
+                        ) : (
+                          <span className="mt-3 block rounded-lg bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                            Result will be published soon
+                          </span>
+                        )}
                         <span className="mt-auto flex items-center justify-between gap-2 pt-4 text-[10px] text-slate-500">
                           <span>
                             {repository.member_count} {Number(repository.member_count) === 1 ? "member" : "members"}
                             {" · "}{repository.status}
                           </span>
-                          <span className="font-semibold text-blue-700 group-hover:underline">Open repository →</span>
+                          <span className="font-semibold text-blue-700 group-hover:underline">{repository.results_published_at ? "View results →" : "Open repository →"}</span>
                         </span>
                       </button>
                     );

@@ -15,11 +15,10 @@ import { DashboardFaculty } from './pages/DashboardFaculty';
 import CreateRepository from "./pages/CreateRepository";
 import RepositoryWorkspace from "./pages/RepositoryWorkspace";
 import AcceptRepositoryInvitation from "./pages/AcceptRepositoryInvitation";
-import InviteRepositoryMembers from "./pages/InviteRepositoryMembers";
 import Tasks from "./pages/Task";
 import { ResetPassword } from "./pages/ResetPassword";
-import FindMentor from "./pages/FindMentor";
 import SharedLibrary from "./pages/SharedLibrary";
+import VerifyEmail from "./pages/VerifyEmail";
 
 
 // Redirect already-logged-in users away from public pages
@@ -31,7 +30,7 @@ const PublicRoute = ({ children }) => {
     const returnTo = location.state?.returnTo;
     if (
       typeof returnTo === "string" &&
-      /^\/invitations\/(?:accept\/[a-f\d]{64}|respond\/[a-f\d]{64}\/accept)$/i.test(returnTo)
+      /^\/invitations\/(?:accept\/[a-f\d]{64}|respond\/[a-f\d]{64}\/(?:accept|reject))$/i.test(returnTo)
     ) {
       return <Navigate to={returnTo} replace />;
     }
@@ -51,6 +50,7 @@ function App() {
           <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
           <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/verify-email" element={<VerifyEmail />} />
           <Route path="/invitations/accept/:token" element={<AcceptRepositoryInvitation />} />
           <Route path="/invitations/respond/:token/:decision" element={<AcceptRepositoryInvitation />} />
 
@@ -61,11 +61,15 @@ function App() {
           <Route element={<ProtectedRoute allowedRoles={['student']} />}>
             <Route path="/dashboard/student" element={<DashboardStudent />} />
             <Route path="/tasks" element={<Tasks />} />
+            <Route path="/shared-library" element={<SharedLibrary />} />
             <Route path="/complete-profile" element={<CompleteProfile />} />
             <Route path="/repository/create" element={<CreateRepository />} />
-            <Route path="/repository/group-invite" element={<InviteRepositoryMembers />} />
-            <Route path="/repository/:repositoryId" element={<RepositoryWorkspace />} />
             <Route path="/find-mentor" element={<FindMentor />} />
+          </Route>
+
+          {/* A repository workspace is available to its student members and accepted faculty mentors. */}
+          <Route element={<ProtectedRoute />}>
+            <Route path="/repository/:repositoryId" element={<RepositoryWorkspace />} />
           </Route>
 
           {/* Protected Routes — faculty */}

@@ -145,6 +145,17 @@ CREATE TABLE IF NOT EXISTS submission_reviews (
         FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS project_result_publications (
+    repository_id INT NOT NULL PRIMARY KEY,
+    published_by INT NOT NULL,
+    published_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    results_snapshot JSON NOT NULL,
+    CONSTRAINT fk_project_result_publications_repository
+        FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE,
+    CONSTRAINT fk_project_result_publications_publisher
+        FOREIGN KEY (published_by) REFERENCES users(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS evaluations (
     id INT AUTO_INCREMENT PRIMARY KEY,
     repository_id INT NOT NULL,

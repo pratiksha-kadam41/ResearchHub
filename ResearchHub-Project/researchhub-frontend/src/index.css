@@ -17,3 +17,11 @@
     @apply bg-parchment text-oxford font-sans antialiased;
   }
 }
+
+.student-sidebar-nav {
+  scrollbar-width: none;
+}
+
+.student-sidebar-nav::-webkit-scrollbar {
+  display: none;
+}

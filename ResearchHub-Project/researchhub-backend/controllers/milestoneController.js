@@ -6,46 +6,26 @@ const {
   getRepositoryMentorship,
   parsePositiveId,
 } = require("../services/repositoryAccess");
-const { reviewSubmission, submitMilestoneWork } = require("./submissionController");
-
-const MILESTONE_STATUSES = [
-  "NOT_STARTED",
-  "PENDING",
-  "IN_PROGRESS",
-  "SUBMITTED",
-  "APPROVED",
-  "REJECTED",
-  "OVERDUE",
-  "COMPLETED",
-  "LATE",
-];
 
 const text = (value, maxLength) =>
   typeof value === "string" && value.trim() && value.trim().length <= maxLength
     ? value.trim()
     : null;
 
-const numericPercentage = (value) => {
-  const number = Number(value);
-  return Number.isFinite(number) && number >= 0 && number <= 100 ? number : null;
-};
-
 const parseMarks = (value) => {
   const number = Number(value);
-  return Number.isFinite(number) && number > 0 && number <= 20 ? number : null;
+  return Number.isInteger(number) && number > 0 && number <= 100 ? number : null;
+};
+
+const parseDateTime = (value) => {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
 };
 
 const futureDate = (value) => {
-  if (typeof value !== "string" || !value.trim()) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) || date <= new Date() ? null : date;
-};
-
-const normalizeStatus = (value) => {
-  const status = typeof value === "string" ? value.trim().toUpperCase() : "";
-  if (status === "DRAFT") return "NOT_STARTED";
-  if (status === "DONE") return "COMPLETED";
-  return MILESTONE_STATUSES.includes(status) ? status : null;
+  const date = parseDateTime(value);
+  return date && date > new Date() ? date : null;
 };
 
 const getMilestone = async (milestoneId) => {
@@ -82,6 +62,12 @@ const getMilestoneById = async (req, res) => {
     if (!(await canAccessRepository(milestone.repository_id, req.user))) {
       return res.status(404).json({ message: "Project not found or you do not have access." });
     }
+    if (req.user.role === "student") {
+      delete milestone.earned_marks;
+      if (milestone.awarded_marks === null) {
+        delete milestone.awarded_marks;
+      }
+    }
     return res.status(200).json({ milestone });
   } catch (error) {
     console.error("Milestone lookup failed:", error);
@@ -89,22 +75,18 @@ const getMilestoneById = async (req, res) => {
   }
 };
 
-const validateMilestoneTotals = async (repositoryId, milestoneMarks, milestoneId = null) => {
-  const [[countRow]] = await db.promise().execute(
+const validateMilestoneTotals = async (connection, repositoryId, milestoneMarks, milestoneId = null) => {
+  const [[countRow]] = await connection.execute(
     `SELECT COUNT(*) AS milestone_count,
-            COALESCE(SUM(COALESCE(marks, weight, 0)), 0) AS total_marks
+            COALESCE(SUM(marks), 0) AS total_marks
      FROM milestones
      WHERE repository_id = ? ${milestoneId ? "AND id <> ?" : ""}`,
     milestoneId ? [repositoryId, milestoneId] : [repositoryId],
   );
 
-  if (Number(countRow.milestone_count) >= 5 && !milestoneId) {
-    return { valid: false, message: "Maximum 5 milestones are allowed for a research repository." };
-  }
-
   const totalMarks = Number(countRow.total_marks) + Number(milestoneMarks || 0);
-  if (totalMarks > 20) {
-    return { valid: false, message: "The total marks for all milestones cannot exceed 20." };
+  if (totalMarks > 100) {
+    return { valid: false, message: "The total marks allocated to a project cannot exceed 100." };
   }
 
   return { valid: true };
@@ -120,22 +102,86 @@ const listRepositoryMilestones = async (req, res) => {
     }
 
     const [milestones] = await db.promise().execute(
-      `SELECT m.*,
-              COALESCE(m.marks, m.weight, 0) AS marks,
-              COALESCE(m.earned_marks, 0) AS earned_marks,
+      `SELECT m.*, (m.deadline >= NOW()) AS submission_open,
+              COALESCE(
+                (SELECT CASE WHEN s.status = 'RESUBMITTED' THEN 'SUBMITTED' ELSE s.status END
+                 FROM milestone_submissions s
+                 WHERE s.milestone_id = m.id
+                 ORDER BY s.version_number DESC, s.id DESC
+                 LIMIT 1),
+                CASE WHEN m.deadline < NOW() THEN 'OVERDUE' ELSE m.status END
+              ) AS effective_status,
               CASE
-                WHEN m.deadline < UTC_TIMESTAMP() AND m.status NOT IN ('COMPLETED', 'LATE', 'APPROVED') THEN 'OVERDUE'
-                ELSE m.status
-              END AS effective_status,
+                WHEN ? = 'faculty' THEN (
+                  SELECT sr.marks_awarded
+                  FROM milestone_submissions s
+                  JOIN submission_reviews sr ON sr.submission_id = s.id
+                  WHERE s.milestone_id = m.id
+                  ORDER BY s.version_number DESC, sr.reviewed_at DESC, sr.id DESC
+                  LIMIT 1
+                )
+                WHEN (
+                  SELECT sr.marks_visible_to_student
+                  FROM milestone_submissions s
+                  JOIN submission_reviews sr ON sr.submission_id = s.id
+                  WHERE s.milestone_id = m.id
+                  ORDER BY s.version_number DESC, sr.reviewed_at DESC, sr.id DESC
+                  LIMIT 1
+                ) = TRUE THEN (
+                  SELECT sr.marks_awarded
+                  FROM milestone_submissions s
+                  JOIN submission_reviews sr ON sr.submission_id = s.id
+                  WHERE s.milestone_id = m.id
+                  ORDER BY s.version_number DESC, sr.reviewed_at DESC, sr.id DESC
+                  LIMIT 1
+                )
+                ELSE NULL
+              END AS awarded_marks,
               COUNT(t.id) AS task_count,
               SUM(t.status = 'COMPLETED') AS completed_task_count
        FROM milestones m
        LEFT JOIN tasks t ON t.milestone_id = m.id
        WHERE m.repository_id = ?
        GROUP BY m.id
-       ORDER BY m.deadline ASC, m.id ASC`,
+       ORDER BY m.order_no ASC, m.id ASC`,
+      [req.user.role, repositoryId],
+    );
+
+    const [suggestions] = await db.promise().execute(
+      `SELECT s.id, s.suggestion_text, s.improvement_text, s.status,
+              source.order_no AS source_milestone_number,
+              source.title AS source_milestone_title
+       FROM milestone_suggestions s
+       JOIN milestones source ON source.id = s.milestone_id
+       WHERE s.project_id = ? AND s.status <> 'ACCEPTED'
+       ORDER BY source.order_no, s.id`,
       [repositoryId],
     );
+    const [paperSectionLinks] = await db.promise().execute(
+      `SELECT link.milestone_id, section.id AS paper_section_id,
+              section.section_title, section.section_order
+       FROM milestone_paper_sections link
+       JOIN paper_sections section ON section.id = link.paper_section_id
+       JOIN research_papers paper ON paper.id = section.paper_id
+       WHERE paper.project_id = ?
+       ORDER BY link.milestone_id, section.section_order`,
+      [repositoryId],
+    );
+    for (const milestone of milestones) {
+      milestone.previous_suggestions = suggestions.filter(
+        (suggestion) => Number(suggestion.source_milestone_number) < Number(milestone.order_no),
+      );
+      milestone.paper_sections = paperSectionLinks
+        .filter((link) => Number(link.milestone_id) === Number(milestone.id))
+        .map((link) => ({
+          id: link.paper_section_id,
+          title: link.section_title,
+          order: link.section_order,
+        }));
+      if (req.user.role === "student") {
+        delete milestone.earned_marks;
+      }
+    }
 
     return res.status(200).json({ milestones });
   } catch (error) {
@@ -148,54 +194,237 @@ const createMilestone = async (req, res) => {
   const repositoryId = parsePositiveId(req.params.repositoryId);
   const title = text(req.body.title, 180);
   const description = typeof req.body.description === "string" ? req.body.description.trim() || null : null;
-  const marksInput = parseMarks(req.body.marks);
-  const legacyWeight = req.body.weight !== undefined ? Number(req.body.weight) : null;
-  const weight = numericPercentage(req.body.weight);
-  const deadline = futureDate(req.body.deadline);
-  const marks = marksInput ?? (legacyWeight !== null && legacyWeight > 0 && legacyWeight <= 20 ? legacyWeight : null);
-  const normalizedWeight = weight ?? (marks !== null ? marks : null);
-  const effectiveMarks = marks ?? (normalizedWeight !== null ? Math.min(normalizedWeight, 20) : null);
-
-  if (!repositoryId || !title || !deadline || (description && description.length > 10000)) {
-    return res.status(422).json({ message: "Provide a title, a valid future deadline, and valid milestone marks." });
+  const instructions = typeof req.body.instructions === "string" ? req.body.instructions.trim() || null : null;
+  const marks = parseMarks(req.body.marks);
+  const deadline = parseDateTime(req.body.deadline);
+  const meetingDate = typeof req.body.meetingDate === "string" && req.body.meetingDate
+    ? parseDateTime(`${req.body.meetingDate}T00:00:00`)
+    : null;
+  const requestedOrder = req.body.orderNo === undefined ? null : parsePositiveId(req.body.orderNo);
+  if (!repositoryId || !title || !deadline || marks === null ||
+      (description && description.length > 10000) ||
+      (instructions && instructions.length > 10000) ||
+      (req.body.meetingDate && !meetingDate) ||
+      (req.body.orderNo !== undefined && !requestedOrder)) {
+    return res.status(422).json({ message: "Provide a title, valid marks, deadline, and valid optional details." });
   }
 
-  if (effectiveMarks === null) {
-    return res.status(422).json({ message: "Milestone marks are required and must be greater than 0 and not exceed 20." });
-  }
-
-  if (effectiveMarks > 20) {
-    return res.status(422).json({ message: "Marks must be positive and must not exceed 20 individually." });
-  }
-
+  const connection = await db.promise().getConnection();
   try {
     if (!(await canManageRepositoryMilestones(repositoryId, req.user.id))) {
       return res.status(403).json({ message: "Only the assigned professor can create milestones." });
     }
 
-    const totalValidation = await validateMilestoneTotals(repositoryId, effectiveMarks, null);
+    await connection.beginTransaction();
+    await connection.execute("SELECT id FROM repositories WHERE id = ? FOR UPDATE", [repositoryId]);
+    const totalValidation = await validateMilestoneTotals(connection, repositoryId, marks);
     if (!totalValidation.valid) {
+      await connection.rollback();
       return res.status(409).json({ message: totalValidation.message });
     }
 
-    const [result] = await db.promise().execute(
-      `INSERT INTO milestones (repository_id, created_by, title, description, marks, earned_marks, weight, deadline, status)
-       VALUES (?, ?, ?, ?, ?, 0, ?, ?, 'NOT_STARTED')`,
-      [repositoryId, req.user.id, title, description, effectiveMarks, normalizedWeight ?? effectiveMarks, deadline],
+    const [[orderRow]] = await connection.execute(
+      "SELECT COALESCE(MAX(order_no), 0) + 1 AS next_order FROM milestones WHERE repository_id = ?",
+      [repositoryId],
     );
-
-    const memberIds = await getRepositoryMemberIds(repositoryId);
+    const orderNo = requestedOrder || Number(orderRow.next_order);
+    const [result] = await connection.execute(
+      `INSERT INTO milestones
+       (repository_id, created_by, order_no, title, description, instructions, marks, earned_marks, weight, deadline, meeting_date, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'NOT_STARTED')`,
+      [repositoryId, req.user.id, orderNo, title, description, instructions, marks, marks, deadline, meetingDate],
+    );
+    if (requestedOrder) {
+      await connection.execute(
+        `UPDATE milestones
+         SET order_no = order_no + 1
+         WHERE repository_id = ? AND id <> ? AND order_no >= ?`,
+        [repositoryId, result.insertId, orderNo],
+      );
+    }
+    const memberIds = await getRepositoryMemberIds(repositoryId, connection);
     await createNotifications(memberIds, {
       type: "MILESTONE_CREATED",
       title: "New milestone assigned",
-      message: `New milestone assigned: ${title}. Deadline: ${new Date(deadline).toLocaleDateString()}. Marks: ${effectiveMarks}.`,
-      linkUrl: `/repository/${repositoryId}`,
-    });
+      message: `Milestone ${orderNo}: ${title} was added to the project.`,
+      linkUrl: `/repository/${repositoryId}?tab=milestones`,
+    }, connection);
+    await connection.commit();
 
-    return res.status(201).json({ message: "Milestone created.", milestoneId: result.insertId, marks: effectiveMarks });
+    return res.status(201).json({ message: "Milestone created.", milestoneId: result.insertId, marks });
   } catch (error) {
+    await connection.rollback();
     console.error("Milestone creation failed:", error);
     return res.status(500).json({ message: "Unable to create milestone." });
+  } finally {
+    connection.release();
+  }
+};
+
+const createMilestonePlan = async (req, res) => {
+  const repositoryId = parsePositiveId(req.params.repositoryId);
+  const inputMilestones = req.body.milestones;
+  if (
+    !repositoryId ||
+    !Array.isArray(inputMilestones) ||
+    inputMilestones.length === 0
+  ) {
+    return res.status(422).json({ message: "Provide a project and at least one milestone." });
+  }
+
+  const plan = [];
+  for (const [index, item] of inputMilestones.entries()) {
+    const title = text(item?.title, 180);
+    const description = text(item?.description, 10000);
+    const instructions = text(item?.instructions, 10000);
+    const marks = parseMarks(item?.marks);
+    const deadline = futureDate(item?.deadline);
+    const meetingDate = typeof item?.meetingDate === "string" && item.meetingDate
+      ? parseDateTime(`${item.meetingDate}T00:00:00`)
+      : null;
+
+    if (
+      !title ||
+      !description ||
+      !instructions ||
+      marks === null ||
+      !deadline ||
+      !meetingDate
+    ) {
+      return res.status(422).json({
+        message: `Complete every required field for Milestone ${index + 1}, including its meeting date, description, and student instructions.`,
+      });
+    }
+    plan.push({ title, description, instructions, marks, deadline, meetingDate });
+  }
+
+  if (plan.reduce((sum, milestone) => sum + milestone.marks, 0) > 100) {
+    return res.status(422).json({ message: "The total marks for a milestone plan cannot exceed 100." });
+  }
+
+  const connection = await db.promise().getConnection();
+  try {
+    if (!(await canManageRepositoryMilestones(repositoryId, req.user.id))) {
+      return res.status(403).json({ message: "Only the assigned professor can create milestones." });
+    }
+
+    await connection.beginTransaction();
+    await connection.execute("SELECT id FROM repositories WHERE id = ? FOR UPDATE", [repositoryId]);
+    const [[existingMarks]] = await connection.execute(
+      "SELECT COALESCE(SUM(marks), 0) AS total_marks FROM milestones WHERE repository_id = ?",
+      [repositoryId],
+    );
+    const planMarks = plan.reduce((sum, milestone) => sum + milestone.marks, 0);
+    if (Number(existingMarks.total_marks) + planMarks > 100) {
+      await connection.rollback();
+      return res.status(409).json({
+        message: "This plan would take the project's total allocated marks above 100.",
+      });
+    }
+
+    const [[orderRow]] = await connection.execute(
+      "SELECT COALESCE(MAX(order_no), 0) AS last_order FROM milestones WHERE repository_id = ?",
+      [repositoryId],
+    );
+    const firstOrder = Number(orderRow.last_order) + 1;
+    const createdMilestones = [];
+    for (const [index, milestone] of plan.entries()) {
+      const orderNo = firstOrder + index;
+      const [result] = await connection.execute(
+        `INSERT INTO milestones
+         (repository_id, created_by, order_no, title, description, instructions,
+          marks, earned_marks, weight, deadline, meeting_date, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'NOT_STARTED')`,
+        [
+          repositoryId,
+          req.user.id,
+          orderNo,
+          milestone.title,
+          milestone.description,
+          milestone.instructions,
+          milestone.marks,
+          milestone.marks,
+          milestone.deadline,
+          milestone.meetingDate,
+        ],
+      );
+      createdMilestones.push({ id: result.insertId, orderNo, title: milestone.title });
+    }
+
+    const memberIds = await getRepositoryMemberIds(repositoryId, connection);
+    await createNotifications(memberIds, {
+      type: "MILESTONE_PLAN_CREATED",
+      title: "Milestone plan published",
+      message: `Faculty published ${plan.length} milestones for this project.`,
+      linkUrl: `/repository/${repositoryId}?tab=milestones`,
+    }, connection);
+    await connection.commit();
+
+    return res.status(201).json({
+      message: `${plan.length} milestones added to the project plan.`,
+      milestones: createdMilestones,
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error("Milestone plan creation failed:", error);
+    return res.status(500).json({ message: "Unable to create the milestone plan." });
+  } finally {
+    connection.release();
+  }
+};
+
+const deleteMilestonePlan = async (req, res) => {
+  const repositoryId = parsePositiveId(req.params.repositoryId);
+  if (!repositoryId) return res.status(400).json({ message: "Invalid project ID." });
+
+  const connection = await db.promise().getConnection();
+  try {
+    if (!(await canManageRepositoryMilestones(repositoryId, req.user.id))) {
+      return res.status(403).json({ message: "Only the assigned professor can clear this milestone plan." });
+    }
+
+    await connection.beginTransaction();
+    await connection.execute("SELECT id FROM repositories WHERE id = ? FOR UPDATE", [repositoryId]);
+    const [[history]] = await connection.execute(
+      `SELECT COUNT(*) AS submission_count
+       FROM milestone_submissions s
+       JOIN milestones m ON m.id = s.milestone_id
+       WHERE m.repository_id = ?`,
+      [repositoryId],
+    );
+    if (Number(history.submission_count) > 0) {
+      await connection.rollback();
+      return res.status(409).json({
+        message: "The plan cannot be cleared because submissions exist. Submission and review history is preserved.",
+      });
+    }
+
+    const [deleted] = await connection.execute(
+      "DELETE FROM milestones WHERE repository_id = ?",
+      [repositoryId],
+    );
+    if (deleted.affectedRows > 0) {
+      const memberIds = await getRepositoryMemberIds(repositoryId, connection);
+      await createNotifications(memberIds, {
+        type: "MILESTONE_PLAN_CLEARED",
+        title: "Milestone plan updated",
+        message: "The faculty cleared the milestone plan and will publish a new one.",
+        linkUrl: `/repository/${repositoryId}?tab=milestones`,
+      }, connection);
+    }
+    await connection.commit();
+    return res.status(200).json({
+      message: deleted.affectedRows > 0
+        ? "Milestone plan cleared. You can now publish a new plan."
+        : "This project has no milestones to clear.",
+      deletedCount: deleted.affectedRows,
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error("Milestone plan deletion failed:", error);
+    return res.status(500).json({ message: "Unable to clear the milestone plan." });
+  } finally {
+    connection.release();
   }
 };
 
@@ -203,6 +432,7 @@ const updateMilestone = async (req, res) => {
   const milestoneId = parsePositiveId(req.params.milestoneId);
   if (!milestoneId) return res.status(400).json({ message: "Invalid milestone ID." });
 
+  const connection = await db.promise().getConnection();
   try {
     const milestone = await getMilestone(milestoneId);
     if (!milestone) return res.status(404).json({ message: "Milestone not found." });
@@ -216,32 +446,72 @@ const updateMilestone = async (req, res) => {
       : typeof req.body.description === "string" && req.body.description.trim().length <= 10000
         ? req.body.description.trim() || null
         : undefined;
-    const requestedMarks = req.body.marks !== undefined ? parseMarks(req.body.marks) : Number(milestone.marks || milestone.weight || 0);
-    const requestedWeight = req.body.weight !== undefined ? numericPercentage(req.body.weight) : Number(milestone.weight || milestone.marks || 0);
-    const marks = requestedMarks ?? (requestedWeight !== null ? Math.min(requestedWeight, 20) : null);
-    const weight = req.body.weight !== undefined ? requestedWeight : Number(milestone.weight || milestone.marks || 0);
-    const deadline = req.body.deadline === undefined ? new Date(milestone.deadline) : futureDate(req.body.deadline);
-    const status = req.body.status === undefined ? (milestone.status || "NOT_STARTED") : normalizeStatus(req.body.status);
+    const instructions = req.body.instructions === undefined
+      ? milestone.instructions
+      : typeof req.body.instructions === "string" && req.body.instructions.trim().length <= 10000
+        ? req.body.instructions.trim() || null
+        : undefined;
+    const marks = req.body.marks === undefined ? Number(milestone.marks) : parseMarks(req.body.marks);
+    const deadline = req.body.deadline === undefined ? new Date(milestone.deadline) : parseDateTime(req.body.deadline);
+    const meetingDate = req.body.meetingDate === undefined
+      ? milestone.meeting_date
+      : req.body.meetingDate
+        ? parseDateTime(`${req.body.meetingDate}T00:00:00`)
+        : null;
+    const requestedOrder = req.body.orderNo === undefined ? Number(milestone.order_no) : parsePositiveId(req.body.orderNo);
 
-    if (!title || description === undefined || !marks || !deadline || !status) {
+    if (!title || description === undefined || instructions === undefined ||
+        !Number.isInteger(marks) || marks <= 0 || marks > 100 ||
+        !deadline || (req.body.meetingDate && !meetingDate) ||
+        !requestedOrder) {
       return res.status(422).json({ message: "One or more milestone fields are invalid." });
     }
 
-    const totalValidation = await validateMilestoneTotals(milestone.repository_id, marks, milestoneId);
+    await connection.beginTransaction();
+    await connection.execute(
+      "SELECT id FROM repositories WHERE id = ? FOR UPDATE",
+      [milestone.repository_id],
+    );
+    const totalValidation = await validateMilestoneTotals(
+      connection,
+      milestone.repository_id,
+      marks,
+      milestoneId,
+    );
     if (!totalValidation.valid) {
+      await connection.rollback();
       return res.status(409).json({ message: totalValidation.message });
     }
 
-    await db.promise().execute(
+    if (requestedOrder < Number(milestone.order_no)) {
+      await connection.execute(
+        `UPDATE milestones SET order_no = order_no + 1
+         WHERE repository_id = ? AND id <> ? AND order_no >= ? AND order_no < ?`,
+        [milestone.repository_id, milestoneId, requestedOrder, milestone.order_no],
+      );
+    } else if (requestedOrder > Number(milestone.order_no)) {
+      await connection.execute(
+        `UPDATE milestones SET order_no = order_no - 1
+         WHERE repository_id = ? AND id <> ? AND order_no > ? AND order_no <= ?`,
+        [milestone.repository_id, milestoneId, milestone.order_no, requestedOrder],
+      );
+    }
+    await connection.execute(
       `UPDATE milestones
-       SET title = ?, description = ?, marks = ?, earned_marks = LEAST(COALESCE(earned_marks, 0), ?), weight = ?, deadline = ?, status = ?
+       SET order_no = ?, title = ?, description = ?, instructions = ?, marks = ?,
+           earned_marks = LEAST(COALESCE(earned_marks, 0), ?), weight = ?,
+           deadline = ?, meeting_date = ?
        WHERE id = ?`,
-      [title, description, marks, marks, weight, deadline, status, milestoneId],
+      [requestedOrder, title, description, instructions, marks, marks, marks, deadline, meetingDate, milestoneId],
     );
+    await connection.commit();
     return res.status(200).json({ message: "Milestone updated." });
   } catch (error) {
+    await connection.rollback();
     console.error("Milestone update failed:", error);
     return res.status(500).json({ message: "Unable to update milestone." });
+  } finally {
+    connection.release();
   }
 };
 
@@ -255,6 +525,15 @@ const deleteMilestone = async (req, res) => {
     if (!(await canManageRepositoryMilestones(milestone.repository_id, req.user.id))) {
       return res.status(403).json({ message: "Only the assigned professor can delete milestones." });
     }
+    const [[submissionCount]] = await db.promise().execute(
+      "SELECT COUNT(*) AS count FROM milestone_submissions WHERE milestone_id = ?",
+      [milestoneId],
+    );
+    if (Number(submissionCount.count) > 0) {
+      return res.status(409).json({
+        message: "This milestone has submission history and cannot be deleted.",
+      });
+    }
     await db.promise().execute("DELETE FROM milestones WHERE id = ?", [milestoneId]);
     return res.status(200).json({ message: "Milestone deleted." });
   } catch (error) {
@@ -263,12 +542,9 @@ const deleteMilestone = async (req, res) => {
   }
 };
 
-const updateMilestoneProgress = async (req, res) => {
+const startMilestone = async (req, res) => {
   const milestoneId = parsePositiveId(req.params.milestoneId);
-  const completion = numericPercentage(req.body.completionPercentage);
-  if (!milestoneId || completion === null) {
-    return res.status(422).json({ message: "Completion percentage must be between 0 and 100." });
-  }
+  if (!milestoneId) return res.status(400).json({ message: "Invalid milestone ID." });
 
   try {
     const milestone = await getMilestone(milestoneId);
@@ -276,15 +552,23 @@ const updateMilestoneProgress = async (req, res) => {
     if (!(await getRepositoryMembership(milestone.repository_id, req.user.id))) {
       return res.status(403).json({ message: "You do not have access to this milestone." });
     }
-    const status = completion === 100 ? "COMPLETED" : completion > 0 ? "IN_PROGRESS" : "NOT_STARTED";
-    await db.promise().execute(
-      "UPDATE milestones SET completion_percentage = ?, status = ? WHERE id = ?",
-      [completion, status, milestoneId],
+    const [[deadline]] = await db.promise().execute(
+      "SELECT deadline >= NOW() AS submission_open FROM milestones WHERE id = ?",
+      [milestoneId],
     );
-    return res.status(200).json({ message: "Milestone progress updated." });
+    if (Number(deadline?.submission_open) !== 1) {
+      return res.status(409).json({ message: "This milestone's submission deadline has passed." });
+    }
+    if (milestone.status === "NOT_STARTED" || milestone.status === "OVERDUE") {
+      await db.promise().execute(
+        "UPDATE milestones SET status = 'IN_PROGRESS' WHERE id = ?",
+        [milestoneId],
+      );
+    }
+    return res.status(200).json({ message: "Milestone marked in progress." });
   } catch (error) {
-    console.error("Milestone progress update failed:", error);
-    return res.status(500).json({ message: "Unable to update milestone progress." });
+    console.error("Milestone start failed:", error);
+    return res.status(500).json({ message: "Unable to start milestone." });
   }
 };
 
@@ -373,23 +657,15 @@ const decideDeadlineExtension = async (req, res) => {
   }
 };
 
-const submitMilestone = async (req, res) => {
-  return submitMilestoneWork(req, res);
-};
-
-const reviewMilestone = async (req, res) => {
-  return reviewSubmission(req, res);
-};
-
 module.exports = {
   createMilestone,
+  createMilestonePlan,
+  deleteMilestonePlan,
   decideDeadlineExtension,
   deleteMilestone,
   getMilestoneById,
   listRepositoryMilestones,
   requestDeadlineExtension,
-  reviewMilestone,
-  submitMilestone,
+  startMilestone,
   updateMilestone,
-  updateMilestoneProgress,
 };

@@ -11,6 +11,7 @@ import {
   Send,
   User,
   X,
+  MapPin,
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
@@ -26,7 +27,7 @@ function Badge({ text }) {
 
 /* ── component ─────────────────────────────────────────────── */
 export default function FindMentor() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const fixedRepositoryId = location.state?.repositoryId
@@ -44,11 +45,15 @@ export default function FindMentor() {
 
   /* request modal state */
   const [selected, setSelected] = React.useState(null); // faculty object
+  const [profileSelected, setProfileSelected] = React.useState(null);
   const [repoId, setRepoId] = React.useState(fixedRepositoryId);
   const [message, setMessage] = React.useState("");
   const [sending, setSending] = React.useState(false);
   const [sendError, setSendError] = React.useState("");
   const [sentFor, setSentFor] = React.useState({}); // { [facultyId]: true } after success
+  const ownedRepositories = repositories.filter(
+    (repository) => Number(repository.owner_id) === Number(user?.id),
+  );
 
   /* ── fetch faculty list + own repos on mount ── */
   React.useEffect(() => {
@@ -108,7 +113,7 @@ export default function FindMentor() {
   /* ── open request modal ── */
   const openModal = (fac) => {
     setSelected(fac);
-    setRepoId(fixedRepositoryId || repositories[0]?.id?.toString() || "");
+    setRepoId(fixedRepositoryId || ownedRepositories[0]?.id?.toString() || "");
     setMessage("");
     setSendError("");
   };
@@ -188,7 +193,7 @@ export default function FindMentor() {
           <p className="text-xs font-bold uppercase tracking-widest text-blue-600">Collaboration</p>
           <h1 className="mt-2 text-2xl font-bold text-[#102A63] lg:text-3xl">Find a faculty collaborator</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Browse faculty members and send a guidance request for your research repository.
+            Search by faculty expertise and request guidance for a project you own.
           </p>
         </div>
 
@@ -201,7 +206,7 @@ export default function FindMentor() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={handleSearchKey}
-              placeholder="Search by name, institution, research area..."
+              placeholder="Search name, institution, research area, or expertise..."
               className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-50"
             />
           </div>
@@ -278,29 +283,128 @@ export default function FindMentor() {
                 )}
 
                 {/* action button */}
-                <div className="mt-5 pt-4 border-t border-slate-100">
-                  {sentFor[fac.id] ? (
-                    <div className="flex items-center gap-2 text-xs font-semibold text-emerald-600">
-                      <CheckCircle2 size={15} />
-                      Request sent
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => openModal(fac)}
-                      disabled={repositories.length === 0}
-                      className="w-full rounded-xl bg-[#0B285F] py-2.5 text-xs font-bold text-white transition hover:bg-[#123C83] disabled:cursor-not-allowed disabled:opacity-50"
-                      title={repositories.length === 0 ? "Create a repository first" : ""}
-                    >
-                      {repositories.length === 0 ? "Create a repository first" : "Request collaboration"}
-                    </button>
-                  )}
+                <div className="mt-5 flex gap-2 border-t border-slate-100 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => setProfileSelected(fac)}
+                    className="flex-1 rounded-xl border border-blue-200 py-2.5 text-xs font-bold text-[#0B285F] transition hover:bg-blue-50"
+                  >
+                    View profile
+                  </button>
+                {sentFor[fac.id] ? (
+                  <div className="flex flex-1 items-center justify-center gap-2 text-xs font-semibold text-emerald-600">
+                    <CheckCircle2 size={15} />
+                    Request sent
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => openModal(fac)}
+                    disabled={ownedRepositories.length === 0}
+                    className="flex-1 rounded-xl bg-[#0B285F] py-2.5 text-xs font-bold text-white transition hover:bg-[#123C83] disabled:cursor-not-allowed disabled:opacity-50"
+                    title={ownedRepositories.length === 0 ? "Create a project first" : ""}
+                  >
+                    {ownedRepositories.length === 0 ? "No owned projects" : "Request guidance"}
+                  </button>
+                )}
                 </div>
               </article>
             ))}
           </div>
         )}
       </main>
+
+      {profileSelected && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4 py-6"
+          onClick={() => setProfileSelected(null)}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="faculty-profile-title"
+            className="max-h-full w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-5">
+              <div className="flex items-center gap-4">
+                <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#0B285F] text-lg font-bold text-white">
+                  {profileSelected.name.split(" ").map((word) => word[0]).slice(0, 2).join("").toUpperCase()}
+                </span>
+                <div>
+                  <h2 id="faculty-profile-title" className="text-xl font-bold text-[#102A63]">
+                    {profileSelected.name}
+                  </h2>
+                  <p className="text-sm text-slate-500">{profileSelected.designation || "Faculty"}</p>
+                  {profileSelected.institution && (
+                    <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-500">
+                      <MapPin size={13} /> {profileSelected.institution}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setProfileSelected(null)}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"
+                aria-label="Close profile"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="grid gap-4 py-5 sm:grid-cols-2">
+              {[
+                ["Research areas", profileSelected.research_areas],
+                ["Expertise", profileSelected.expertise],
+                ["Research interests", profileSelected.research_interests],
+                ["Guidance areas", profileSelected.guidance_areas],
+              ].map(([heading, content]) => (
+                <div key={heading} className="rounded-xl border border-slate-100 bg-slate-50 p-4">
+                  <h3 className="text-xs font-bold uppercase tracking-wide text-blue-700">{heading}</h3>
+                  <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600">
+                    {content || "Not provided"}
+                  </p>
+                </div>
+              ))}
+              <div className="rounded-xl border border-slate-100 bg-slate-50 p-4 sm:col-span-2">
+                <h3 className="text-xs font-bold uppercase tracking-wide text-blue-700">
+                  Projects currently guiding ({Number(profileSelected.guided_project_count) || 0})
+                </h3>
+                {profileSelected.guided_projects && (
+                  <ul className="mt-2 space-y-1 text-sm text-slate-600">
+                    {profileSelected.guided_projects.split("\n").filter(Boolean).map((project) => (
+                      <li key={project} className="flex items-center gap-2">
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-600" aria-hidden="true" />
+                        <span>{project}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {Number(profileSelected.private_guided_project_count) > 0 && (
+                  <p className="mt-2 text-xs text-slate-500">
+                    {profileSelected.private_guided_project_count} private project
+                    {Number(profileSelected.private_guided_project_count) === 1 ? "" : "s"} hidden.
+                  </p>
+                )}
+                {!Number(profileSelected.guided_project_count) && (
+                  <p className="mt-2 text-sm text-slate-500">No active projects yet.</p>
+                )}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setProfileSelected(null);
+                openModal(profileSelected);
+              }}
+              disabled={ownedRepositories.length === 0}
+              className="w-full rounded-xl bg-[#0B285F] px-4 py-3 text-sm font-bold text-white transition hover:bg-[#123C83] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Request guidance for a project
+            </button>
+          </section>
+        </div>
+      )}
 
       {/* ── Request modal ── */}
       {selected && (
@@ -336,12 +440,12 @@ export default function FindMentor() {
                   {fixedRepositoryId ? "Repository" : "Select repository"}
                   <span className="text-red-500"> *</span>
                 </label>
-                {repositories.length === 0 ? (
-                  <p className="text-xs text-amber-600">You have no repositories yet. Create one first.</p>
+                {ownedRepositories.length === 0 ? (
+                  <p className="text-xs text-amber-600">You do not own a project yet. Create a project first.</p>
                 ) : fixedRepositoryId ? (
                   <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
-                    {repositories.find((repository) => String(repository.id) === fixedRepositoryId)?.name
-                      || "Selected repository"}
+                    {ownedRepositories.find((repository) => String(repository.id) === fixedRepositoryId)?.name
+                      || "This project is not available for your account."}
                   </p>
                 ) : (
                   <div className="relative">
@@ -352,7 +456,7 @@ export default function FindMentor() {
                       className="w-full appearance-none rounded-xl border border-slate-200 bg-white py-3 pl-9 pr-4 text-sm outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-50"
                     >
                       <option value="">— Choose a repository —</option>
-                      {repositories.map((r) => (
+                      {ownedRepositories.map((r) => (
                         <option key={r.id} value={r.id}>
                           {r.name} ({r.research_type})
                         </option>
@@ -395,7 +499,7 @@ export default function FindMentor() {
                 </button>
                 <button
                   type="submit"
-                  disabled={sending || !repoId}
+                  disabled={sending || !repoId || !ownedRepositories.some((repository) => String(repository.id) === String(repoId))}
                   className="inline-flex items-center gap-2 rounded-xl bg-[#0B285F] px-5 py-2.5 text-sm font-bold text-white transition hover:bg-[#123C83] disabled:cursor-wait disabled:opacity-60"
                 >
                   {sending ? (

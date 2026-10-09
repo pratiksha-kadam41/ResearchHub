@@ -54,13 +54,13 @@ export default function AcceptRepositoryInvitation() {
   }, [invitationToken]);
 
   const respondToInvitation = React.useCallback(async () => {
-    if (decision === "accept" && !authToken) {
-      setError("Sign in with the invited student account to accept this invitation.");
+    if (!authToken) {
+      setError("Sign in with the invited student account to respond to this invitation.");
       return;
     }
 
-    if (decision === "accept" && user?.role !== "student") {
-      setError("Only the invited student account can accept this invitation.");
+    if (user?.role !== "student") {
+      setError("Only the invited student account can respond to this invitation.");
       return;
     }
 
@@ -180,12 +180,12 @@ export default function AcceptRepositoryInvitation() {
           <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
             This invitation has already been {invitation.status}.
           </div>
-        ) : decision === "accept" && !authToken ? (
+        ) : !authToken ? (
           <div className="mt-6 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">
             <div className="flex gap-2">
               <Mail size={17} className="mt-0.5 shrink-0" />
               <p>
-                To accept, first sign in or create a student account using{" "}
+                To {decision === "accept" ? "accept" : "reject"}, first sign in or create a student account using{" "}
                 <strong>{invitation.email}</strong>.
               </p>
             </div>
@@ -212,9 +212,9 @@ export default function AcceptRepositoryInvitation() {
               </Link>
             </div>
           </div>
-        ) : decision === "accept" && user?.role !== "student" ? (
+        ) : user?.role !== "student" ? (
           <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-            Group invitations can only be accepted by a student account.
+            Group invitations can only be handled by a student account.
           </div>
         ) : loading ? (
           <div
@@ -253,13 +253,15 @@ export default function AcceptRepositoryInvitation() {
           </p>
         )}
         {invitation && (
-          <p className="mt-4 text-xs leading-5 text-slate-500">
-            Invitation to join <strong>{invitation.repositoryName}</strong>
-            {" for "}
-            <strong>{invitation.email}</strong>.
-            {decision === "accept" && !authToken &&
-              " Sign in or create a student account with this email before accepting."}
-          </p>
+          <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs leading-5 text-slate-600">
+            <p className="font-semibold text-slate-800">Research Project Invitation</p>
+            <p className="mt-2"><strong>Project:</strong> {invitation.repositoryName}</p>
+            <p><strong>Owner:</strong> {invitation.ownerName || "ResearchHub student"}</p>
+            <p><strong>Research domain:</strong> {invitation.domain || "Not specified"}</p>
+            <p className="mt-1"><strong>Description:</strong> {invitation.description || "No description provided."}</p>
+            <p className="mt-2"><strong>Invited account:</strong> {invitation.email}</p>
+            {!authToken && " Sign in or create a student account with this email before responding."}
+          </div>
         )}
       </section>
     </main>

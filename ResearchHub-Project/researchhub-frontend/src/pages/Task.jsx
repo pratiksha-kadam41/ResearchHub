@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { ArrowLeft, BookOpen } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import NotificationBell from "../components/NotificationBell";
 
 const Tasks = () => {
+  const location = useLocation();
+  const historyView = new URLSearchParams(location.search).get("view") === "history";
   const [repositories, setRepositories] = useState([]);
   const [selectedRepository, setSelectedRepository] = useState("");
   const [tasks, setTasks] = useState([]);
@@ -66,7 +68,7 @@ const Tasks = () => {
         const token = getToken();
 
         const response = await fetch(
-          `/api/tasks/repository/${selectedRepository}`,
+          `/api/tasks/repository/${selectedRepository}${historyView ? "?status=COMPLETED" : ""}`,
           {
             headers: {
               Authorization: `Bearer ${token}`,
@@ -89,7 +91,7 @@ const Tasks = () => {
     };
 
     loadTasks();
-  }, [selectedRepository]);
+  }, [historyView, selectedRepository]);
 
   // Update student task progress
   const updateProgress = async (taskId, progressPercentage) => {
@@ -205,10 +207,12 @@ const Tasks = () => {
         {/* Header */}
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-[#102A63] mt-1">
-            Research Tasks
+            {historyView ? "Task History" : "Research Tasks"}
           </h1>
           <p className="text-slate-500 text-xs mt-1">
-            Track milestones progress, prioritize tasks, and keep deliverables updated.
+            {historyView
+              ? "Review completed tasks across your research repositories."
+              : "Track milestones progress, prioritize tasks, and keep deliverables updated."}
           </p>
         </div>
 
@@ -261,7 +265,7 @@ const Tasks = () => {
         ) : tasks.length === 0 ? (
           <div className="bg-white rounded-xl border border-slate-200 p-10 text-center">
             <h2 className="text-xl font-semibold text-slate-800">
-              No Tasks Found
+              {historyView ? "No Completed Tasks" : "No Tasks Found"}
             </h2>
 
             <p className="text-slate-500 mt-2">

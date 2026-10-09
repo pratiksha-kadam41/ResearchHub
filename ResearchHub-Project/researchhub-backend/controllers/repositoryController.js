@@ -1,49 +1,9 @@
 const { createHash, randomBytes } = require("node:crypto");
-const nodemailer = require("nodemailer");
 const db = require("../config/db");
+const { getMailTransport } = require("../utils/mailer");
 
-// The owner plus 3–4 accepted invitations forms the intended 4–5 person group.
-const MIN_GROUP_INVITATIONS = 3;
-const MAX_GROUP_INVITATIONS = 4;
 const INVITATION_VALIDITY_DAYS = 7;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-const getMailTransport = () => {
-  const {
-    SMTP_USER,
-    SMTP_PASS,
-    SMTP_HOST = "smtp.gmail.com",
-    SMTP_PORT = "587",
-    SMTP_FROM = SMTP_USER,
-  } = process.env;
-
-  if (!SMTP_USER && !SMTP_PASS) {
-    return null;
-  }
-
-  if (!SMTP_USER || !SMTP_PASS || !SMTP_FROM) {
-    throw new Error(
-      "Gmail setup is incomplete. Set SMTP_USER to your Gmail address and SMTP_PASS to a new Google App Password in the backend .env file.",
-    );
-  }
-
-  const port = Number(SMTP_PORT);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error("SMTP_PORT must be a valid port number.");
-  }
-
-  return nodemailer.createTransport({
-    host: SMTP_HOST,
-    port,
-    secure: process.env.SMTP_SECURE
-      ? process.env.SMTP_SECURE === "true"
-      : port === 465,
-    auth: {
-      user: SMTP_USER,
-      pass: SMTP_PASS,
-    },
-  });
-};
 
 const createInvitationToken = () => randomBytes(32).toString("hex");
 const hashInvitationToken = (token) =>
@@ -63,7 +23,7 @@ const getInvitationDecisionUrl = (token, decision) => {
   return `${frontendUrl}/invitations/respond/${token}/${decision}`;
 };
 const escapeHtml = (value) =>
-  value.replace(/[&<>"']/g, (character) => {
+  String(value || "").replace(/[&<>"']/g, (character) => {
     const entities = {
       "&": "&amp;",
       "<": "&lt;",
@@ -88,14 +48,16 @@ const sendInvitationEmail = async (transporter, invitation) => {
   const rejectUrl = getInvitationDecisionUrl(invitation.token, "reject");
   const inviterName = escapeHtml(invitation.inviterName);
   const repositoryName = escapeHtml(invitation.repositoryName);
+  const repositoryDomain = escapeHtml(invitation.repositoryDomain);
+  const repositoryDescription = escapeHtml(invitation.repositoryDescription);
   const email = escapeHtml(invitation.email);
 
   await transporter.sendMail({
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
     to: invitation.email,
-    subject: `Invitation to join ${invitation.repositoryName} on ResearchHub`,
-    text: `${invitation.inviterName} invited you to join "${invitation.repositoryName}" on ResearchHub.\n\nAccept: ${acceptUrl}\nReject: ${rejectUrl}\n\nThis invitation expires in ${INVITATION_VALIDITY_DAYS} days. To accept, sign in or create a student account using ${invitation.email}. The link opens ResearchHub to confirm your choice; opening an email link alone will not change the invitation status.`,
-    html: `<p>${inviterName} invited you to join <strong>${repositoryName}</strong> on ResearchHub.</p><p>This invitation expires in ${INVITATION_VALIDITY_DAYS} days.</p><p><a href="${acceptUrl}" style="display:inline-block;padding:12px 20px;margin-right:8px;background-color:#2563eb;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:bold">Accept invitation</a><a href="${rejectUrl}" style="display:inline-block;padding:12px 20px;background-color:#ffffff;color:#b91c1c;text-decoration:none;border:1px solid #fecaca;border-radius:8px;font-weight:bold">Reject invitation</a></p><p>To accept, sign in or create a student account using ${email}. ResearchHub will ask you to confirm your choice before updating the invitation.</p>`,
+    subject: `Research Project Invitation: ${invitation.repositoryName}`,
+    text: `Research Project Invitation\n\n${invitation.inviterName} invited you to join "${invitation.repositoryName}" on ResearchHub.\nOwner: ${invitation.inviterName}\nResearch domain: ${invitation.repositoryDomain}\nDescription: ${invitation.repositoryDescription}\n\nAccept: ${acceptUrl}\nReject: ${rejectUrl}\n\nThis invitation expires in ${INVITATION_VALIDITY_DAYS} days. Sign in using ${invitation.email} to respond.`,
+    html: `<h2>Research Project Invitation</h2><p>${inviterName} invited you to join <strong>${repositoryName}</strong> on ResearchHub.</p><p><strong>Research domain:</strong> ${repositoryDomain}</p><p><strong>Project description:</strong><br>${repositoryDescription.replace(/\n/g, "<br>")}</p><p>This invitation expires in ${INVITATION_VALIDITY_DAYS} days.</p><p><a href="${acceptUrl}" style="display:inline-block;padding:12px 20px;margin-right:8px;background-color:#2563eb;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:bold">Accept invitation</a><a href="${rejectUrl}" style="display:inline-block;padding:12px 20px;background-color:#ffffff;color:#b91c1c;text-decoration:none;border:1px solid #fecaca;border-radius:8px;font-weight:bold">Reject invitation</a></p><p>To respond, sign in using ${email}. ResearchHub confirms your choice before changing project membership.</p>`,
   });
 };
 
@@ -127,37 +89,23 @@ const createRepository = async (req, res) => {
   const normalizedEmails = memberEmails.map((email) =>
     typeof email === "string" ? email.trim().toLowerCase() : "",
   );
-  const [[owner]] = await db
-    .promise()
-    .execute(
-      "SELECT id, name, email FROM users WHERE id = ? AND role = 'student'",
-      [req.user.id],
-    );
-
-  if (!owner) {
-    return res.status(404).json({ message: "Student account not found." });
-  }
-
   if (
     normalizedEmails.some((email) => !EMAIL_PATTERN.test(email)) ||
-    new Set(normalizedEmails).size !== normalizedEmails.length ||
-    normalizedEmails.includes(owner.email.toLowerCase())
+    new Set(normalizedEmails).size !== normalizedEmails.length
   ) {
     return res.status(400).json({
-      message: "Enter unique, valid email addresses that do not include your own.",
+      message: "Enter unique, valid email addresses for group members.",
     });
   }
 
   if (
-    (researchType === "group" &&
-      (normalizedEmails.length < MIN_GROUP_INVITATIONS ||
-        normalizedEmails.length > MAX_GROUP_INVITATIONS)) ||
+    (researchType === "group" && normalizedEmails.length < 1) ||
     (researchType === "individual" && normalizedEmails.length > 0)
   ) {
     return res.status(400).json({
       message:
         researchType === "group"
-          ? `A group repository requires ${MIN_GROUP_INVITATIONS} to ${MAX_GROUP_INVITATIONS} member email addresses, creating a 4–5 person group including the owner.`
+          ? "Add at least one student email address to create a group repository."
           : "Individual repositories cannot include group invitations.",
     });
   }
@@ -167,23 +115,20 @@ const createRepository = async (req, res) => {
   if (researchType === "group") {
     try {
       transporter = getMailTransport();
-      if (transporter) {
-        await transporter.verify();
-      }
+      if (!transporter) throw new Error("Email delivery is not configured on this server.");
+      await transporter.verify();
     } catch (error) {
       console.error("Repository invitation email setup failed:", error);
       emailConfigurationError = error.message;
-      transporter = null;
-    }
-
-    if (!transporter && !emailConfigurationError) {
-      emailConfigurationError =
-        "Automatic email is not configured. Share the secure invitation links manually, or configure SMTP to send emails automatically.";
+      return res.status(503).json({
+        message: "Group invitations require working email delivery. Check the server email configuration and try again.",
+      });
     }
   }
 
   const connection = await db.promise().getConnection();
   let repositoryId;
+  let owner;
   const invitations = normalizedEmails.map((email) => ({
     email,
     token: createInvitationToken(),
@@ -191,6 +136,54 @@ const createRepository = async (req, res) => {
 
   try {
     await connection.beginTransaction();
+
+    const [ownerRows] = await connection.execute(
+      `SELECT id, name, email
+       FROM users
+       WHERE id = ? AND role = 'student' AND is_active = TRUE
+         AND email_verified = TRUE
+       FOR UPDATE`,
+      [req.user.id],
+    );
+    owner = ownerRows[0];
+    if (!owner) {
+      await connection.rollback();
+      return res.status(403).json({
+        message: "An active, email-verified student account is required to create a project.",
+      });
+    }
+    if (normalizedEmails.includes(owner.email.toLowerCase())) {
+      await connection.rollback();
+      return res.status(400).json({ message: "You cannot invite yourself to your own project." });
+    }
+
+    let invitees = [];
+    if (researchType === "group") {
+      const placeholders = normalizedEmails.map(() => "?").join(", ");
+      [invitees] = await connection.execute(
+        `SELECT id, name, email, role, email_verified, is_active
+         FROM users
+         WHERE LOWER(email) IN (${placeholders})
+         FOR UPDATE`,
+        normalizedEmails,
+      );
+      const inviteesByEmail = new Map(
+        invitees.map((invitee) => [invitee.email.toLowerCase(), invitee]),
+      );
+      const invalidInvitees = normalizedEmails.filter((email) => {
+        const invitee = inviteesByEmail.get(email);
+        return !invitee || invitee.role !== "student" || !invitee.email_verified || !invitee.is_active;
+      });
+      if (invalidInvitees.length > 0) {
+        await connection.rollback();
+        return res.status(422).json({
+          message: `Only active, email-verified student accounts can be invited. Check: ${invalidInvitees.join(", ")}`,
+        });
+      }
+      for (const invitation of invitations) {
+        invitation.invitedUser = inviteesByEmail.get(invitation.email);
+      }
+    }
 
     const [repositoryResult] = await connection.execute(
       `INSERT INTO repositories
@@ -214,16 +207,30 @@ const createRepository = async (req, res) => {
     );
 
     for (const invitation of invitations) {
-      await connection.execute(
+      const [invitationResult] = await connection.execute(
         `INSERT INTO repository_invitations
-          (repository_id, inviter_id, email, token_hash, expires_at, delivery_status)
-         VALUES (?, ?, ?, ?, DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? DAY), 'pending')`,
+          (repository_id, inviter_id, invited_user_id, email, token_hash, expires_at, delivery_status)
+         VALUES (?, ?, ?, ?, ?, DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? DAY), 'pending')`,
         [
           repositoryId,
           owner.id,
+          invitation.invitedUser.id,
           invitation.email,
           hashInvitationToken(invitation.token),
           INVITATION_VALIDITY_DAYS,
+        ],
+      );
+      invitation.id = invitationResult.insertId;
+      const notificationMessage =
+        `${owner.name} invited you to "${name.trim()}". Domain: ${domain.trim()}. Description: ${description.trim()}`
+          .slice(0, 500);
+      await connection.execute(
+        `INSERT INTO notifications (user_id, type, title, message, link_url)
+         VALUES (?, 'REPOSITORY_INVITATION', 'Research Project Invitation', ?, ?)`,
+        [
+          invitation.invitedUser.id,
+          notificationMessage,
+          `/dashboard/student?invitation=${invitationResult.insertId}`,
         ],
       );
     }
@@ -251,57 +258,33 @@ const createRepository = async (req, res) => {
     connection.release();
   }
 
-  // ── Notify invited students who already have an account ─────────────
-  try {
-    for (const invitation of invitations) {
-      const [[invitedUser]] = await db.promise().execute(
-        "SELECT id FROM users WHERE email = ? AND role = 'student'",
-        [invitation.email],
-      );
-      if (invitedUser) {
-        await db.promise().execute(
-          `INSERT INTO notifications (user_id, type, title, message, link_url)
-           VALUES (?, 'REPOSITORY_INVITATION', ?, ?, '/dashboard/student')`,
-          [
-            invitedUser.id,
-            `Invitation to join "${name.trim()}"`,
-            `${owner.name} invited you to join the research repository "${name.trim()}". Open your dashboard to accept or reject.`,
-          ],
-        );
-      }
-    }
-  } catch (notifError) {
-    // Non-fatal — log and continue
-    console.error("Notification insert failed (non-fatal):", notifError);
-  }
-
   const deliveryResults = await Promise.all(
     invitations.map(async (invitation) => {
-      let deliveryStatus = transporter ? "sent" : "pending";
+      let deliveryStatus = "sent";
 
-      if (transporter) {
-        try {
-          await sendInvitationEmail(transporter, {
-            ...invitation,
-            repositoryName: name.trim(),
-            inviterName: owner.name,
-          });
-        } catch (error) {
-          deliveryStatus = "failed";
-          emailConfigurationError =
-            "One or more emails could not be delivered. Generate a link below or check the SMTP settings.";
-          console.error(
-            `Unable to send repository invitation to ${invitation.email}:`,
-            error,
-          );
-        }
+      try {
+        await sendInvitationEmail(transporter, {
+          ...invitation,
+          repositoryName: name.trim(),
+          repositoryDomain: domain.trim(),
+          repositoryDescription: description.trim(),
+          inviterName: owner.name,
+        });
+      } catch (error) {
+        deliveryStatus = "failed";
+        emailConfigurationError =
+          "One or more invitation emails could not be delivered. You can retry from the project workspace.";
+        console.error(
+          `Unable to send repository invitation to ${invitation.email}:`,
+          error,
+        );
       }
 
       await db
         .promise()
         .execute(
-          "UPDATE repository_invitations SET delivery_status = ? WHERE repository_id = ? AND email = ?",
-          [deliveryStatus, repositoryId, invitation.email],
+          "UPDATE repository_invitations SET delivery_status = ? WHERE id = ?",
+          [deliveryStatus, invitation.id],
         );
 
       return {
@@ -340,6 +323,21 @@ const getRepositories = async (req, res) => {
     const [repositories] = await db.promise().execute(
       `SELECT r.id, r.name, r.description, r.domain, r.research_type,
               r.privacy, r.status, r.owner_id, r.created_at,
+              owner.name AS owner_name,
+              paper.id AS research_paper_id,
+              paper.title AS research_paper_title,
+              paper.status AS research_paper_status,
+              result_publication.published_at AS results_published_at,
+              result_publication.results_snapshot AS results_snapshot,
+              (SELECT COUNT(*)
+               FROM paper_sections ps
+               LEFT JOIN paper_template_sections pts ON pts.id = ps.template_section_id
+               WHERE ps.paper_id = paper.id AND (pts.id IS NULL OR pts.is_required = TRUE)) AS paper_section_count,
+              (SELECT COUNT(*) FROM paper_sections ps
+               LEFT JOIN paper_template_sections pts ON pts.id = ps.template_section_id
+               WHERE ps.paper_id = paper.id
+                 AND (pts.id IS NULL OR pts.is_required = TRUE)
+                 AND ps.status = 'COMPLETED') AS paper_completed_section_count,
               COUNT(all_members.user_id) AS member_count,
               (SELECT mr.status
                FROM mentor_requests mr
@@ -358,6 +356,12 @@ const getRepositories = async (req, res) => {
        FROM repository_members my_membership
        INNER JOIN repositories r
          ON r.id = my_membership.repository_id
+       INNER JOIN users owner
+         ON owner.id = r.owner_id
+       LEFT JOIN research_papers paper
+         ON paper.project_id = r.id
+       LEFT JOIN project_result_publications result_publication
+         ON result_publication.repository_id = r.id
        INNER JOIN repository_members all_members
          ON all_members.repository_id = r.id
        WHERE my_membership.user_id = ?
@@ -395,6 +399,11 @@ const getRepositories = async (req, res) => {
 
     for (const repository of repositories) {
       repository.members = membersByRepository.get(repository.id) || [];
+      if (repository.results_snapshot) {
+        repository.results_snapshot = typeof repository.results_snapshot === "string"
+          ? JSON.parse(repository.results_snapshot)
+          : repository.results_snapshot;
+      }
     }
 
     return res.status(200).json({ repositories });
@@ -415,18 +424,54 @@ const getRepository = async (req, res) => {
     if (req.user.role === "student") {
       [repositories] = await db.promise().execute(
         `SELECT r.id, r.name, r.description, r.domain, r.research_type, r.privacy,
-                r.status, r.owner_id, r.created_at
+                r.status, r.owner_id, r.created_at, owner.name AS owner_name,
+                (SELECT rp.id FROM research_papers rp WHERE rp.project_id = r.id LIMIT 1) AS research_paper_id,
+                (SELECT pt.name
+                 FROM research_papers rp
+                 INNER JOIN paper_templates pt ON pt.id = rp.template_id
+                 WHERE rp.project_id = r.id LIMIT 1) AS research_paper_template,
+                (SELECT COUNT(*)
+                 FROM paper_sections ps
+                 INNER JOIN research_papers rp ON rp.id = ps.paper_id
+                 LEFT JOIN paper_template_sections pts ON pts.id = ps.template_section_id
+                 WHERE rp.project_id = r.id AND (pts.id IS NULL OR pts.is_required = TRUE)) AS paper_required_section_count,
+                (SELECT COUNT(*)
+                 FROM paper_sections ps
+                 INNER JOIN research_papers rp ON rp.id = ps.paper_id
+                 LEFT JOIN paper_template_sections pts ON pts.id = ps.template_section_id
+                 WHERE rp.project_id = r.id
+                   AND (pts.id IS NULL OR pts.is_required = TRUE)
+                   AND ps.status = 'COMPLETED') AS paper_completed_section_count
          FROM repositories r
          INNER JOIN repository_members rm ON rm.repository_id = r.id
+         INNER JOIN users owner ON owner.id = r.owner_id
          WHERE r.id = ? AND rm.user_id = ?`,
         [repositoryId, req.user.id],
       );
     } else if (req.user.role === "faculty") {
       [repositories] = await db.promise().execute(
         `SELECT r.id, r.name, r.description, r.domain, r.research_type, r.privacy,
-                r.status, r.owner_id, r.created_at
+                r.status, r.owner_id, r.created_at, owner.name AS owner_name,
+                (SELECT rp.id FROM research_papers rp WHERE rp.project_id = r.id LIMIT 1) AS research_paper_id,
+                (SELECT pt.name
+                 FROM research_papers rp
+                 INNER JOIN paper_templates pt ON pt.id = rp.template_id
+                 WHERE rp.project_id = r.id LIMIT 1) AS research_paper_template,
+                (SELECT COUNT(*)
+                 FROM paper_sections ps
+                 INNER JOIN research_papers rp ON rp.id = ps.paper_id
+                 LEFT JOIN paper_template_sections pts ON pts.id = ps.template_section_id
+                 WHERE rp.project_id = r.id AND (pts.id IS NULL OR pts.is_required = TRUE)) AS paper_required_section_count,
+                (SELECT COUNT(*)
+                 FROM paper_sections ps
+                 INNER JOIN research_papers rp ON rp.id = ps.paper_id
+                 LEFT JOIN paper_template_sections pts ON pts.id = ps.template_section_id
+                 WHERE rp.project_id = r.id
+                   AND (pts.id IS NULL OR pts.is_required = TRUE)
+                   AND ps.status = 'COMPLETED') AS paper_completed_section_count
          FROM repositories r
          INNER JOIN mentor_requests mr ON mr.repository_id = r.id
+         INNER JOIN users owner ON owner.id = r.owner_id
          WHERE r.id = ? AND mr.faculty_id = ? AND mr.status = 'ACCEPTED'`,
         [repositoryId, req.user.id],
       );
@@ -450,12 +495,13 @@ const getRepository = async (req, res) => {
     );
 
     let guidanceRequests = [];
-    if (req.user.role === "student") {
+    if (req.user.role === "student" || req.user.role === "faculty") {
       [guidanceRequests] = await db.promise().execute(
-        `SELECT mr.id, mr.status, mr.rejection_reason, mr.responded_at,
-                f.name AS faculty_name
+        `SELECT mr.id, mr.status, mr.rejection_reason, mr.created_at, mr.responded_at,
+                f.name AS faculty_name, fp.designation
          FROM mentor_requests mr
          INNER JOIN users f ON f.id = mr.faculty_id
+         LEFT JOIN faculty_profiles fp ON fp.user_id = f.id
          WHERE mr.repository_id = ?
          ORDER BY mr.created_at DESC`,
         [repositoryId],
@@ -465,10 +511,12 @@ const getRepository = async (req, res) => {
     let invitations = [];
     if (repositories[0].owner_id === req.user.id) {
       [invitations] = await db.promise().execute(
-        `SELECT id, email, delivery_status, response_status, expires_at, created_at
-         FROM repository_invitations
-         WHERE repository_id = ?
-         ORDER BY created_at DESC`,
+        `SELECT ri.id, ri.email, ri.delivery_status, ri.response_status,
+                ri.expires_at, ri.created_at, invitee.name AS invitee_name
+         FROM repository_invitations ri
+         LEFT JOIN users invitee ON invitee.id = ri.invited_user_id
+         WHERE ri.repository_id = ?
+         ORDER BY ri.created_at DESC`,
         [repositoryId],
       );
     }
@@ -496,10 +544,13 @@ const getRepositoryInvitation = async (req, res) => {
   try {
     const [[invitation]] = await db.promise().execute(
       `SELECT ri.email, ri.response_status, r.name AS repository_name,
+              r.description AS repository_description, r.domain,
+              owner.name AS owner_name,
               (ri.expires_at <= UTC_TIMESTAMP()) AS expired,
               (ri.response_status <> 'pending') AS responded
        FROM repository_invitations ri
        INNER JOIN repositories r ON r.id = ri.repository_id
+       INNER JOIN users owner ON owner.id = r.owner_id
        WHERE ri.token_hash = ?
        LIMIT 1`,
       [hashInvitationToken(token)],
@@ -512,6 +563,9 @@ const getRepositoryInvitation = async (req, res) => {
       return res.status(200).json({
         email: invitation.email,
         repositoryName: invitation.repository_name,
+        description: invitation.repository_description,
+        domain: invitation.domain,
+        ownerName: invitation.owner_name,
         status: invitation.response_status,
       });
     }
@@ -524,6 +578,9 @@ const getRepositoryInvitation = async (req, res) => {
     return res.status(200).json({
       email: invitation.email,
       repositoryName: invitation.repository_name,
+      description: invitation.repository_description,
+      domain: invitation.domain,
+      ownerName: invitation.owner_name,
       status: invitation.response_status,
     });
   } catch (error) {
@@ -634,7 +691,7 @@ const acceptRepositoryInvitation = async (req, res) => {
     await connection.beginTransaction();
 
     const [invitations] = await connection.execute(
-      `SELECT ri.id, ri.repository_id, ri.email,
+      `SELECT ri.id, ri.repository_id, ri.email, ri.invited_user_id,
               ri.response_status,
               (ri.expires_at <= UTC_TIMESTAMP()) AS expired,
               r.name AS repository_name
@@ -654,11 +711,18 @@ const acceptRepositoryInvitation = async (req, res) => {
 
     const invitation = invitations[0];
     const [[user]] = await connection.execute(
-      "SELECT email FROM users WHERE id = ?",
+      "SELECT email, role, email_verified, is_active FROM users WHERE id = ?",
       [req.user.id],
     );
 
-    if (!user || user.email.toLowerCase() !== invitation.email.toLowerCase()) {
+    if (
+      !user ||
+      user.role !== "student" ||
+      !user.email_verified ||
+      !user.is_active ||
+      (invitation.invited_user_id && invitation.invited_user_id !== req.user.id) ||
+      user.email.toLowerCase() !== invitation.email.toLowerCase()
+    ) {
       await connection.rollback();
       return res.status(403).json({
         message: `Sign in with ${invitation.email} to accept this invitation.`,
@@ -755,6 +819,8 @@ const acceptRepositoryInvitation = async (req, res) => {
 };
 
 const rejectRepositoryInvitation = async (req, res) => {
+  if (!isStudent(req, res)) return;
+
   const { token } = req.params;
   if (typeof token !== "string" || !/^[a-f\d]{64}$/i.test(token)) {
     return res.status(400).json({ message: "This invitation link is invalid." });
@@ -765,7 +831,7 @@ const rejectRepositoryInvitation = async (req, res) => {
     await connection.beginTransaction();
     const [invitations] = await connection.execute(
       `SELECT ri.id, ri.inviter_id, ri.repository_id, ri.response_status,
-              ri.email,
+              ri.email, ri.invited_user_id,
               (ri.expires_at <= UTC_TIMESTAMP()) AS expired,
               r.name AS repository_name
        FROM repository_invitations ri
@@ -781,6 +847,23 @@ const rejectRepositoryInvitation = async (req, res) => {
     }
 
     const invitation = invitations[0];
+    const [[user]] = await connection.execute(
+      "SELECT id, email, role, email_verified, is_active FROM users WHERE id = ?",
+      [req.user.id],
+    );
+    if (
+      !user ||
+      user.role !== "student" ||
+      !user.email_verified ||
+      !user.is_active ||
+      (invitation.invited_user_id && invitation.invited_user_id !== user.id) ||
+      user.email.toLowerCase() !== invitation.email.toLowerCase()
+    ) {
+      await connection.rollback();
+      return res.status(403).json({
+        message: "Sign in with the verified student account that received this invitation.",
+      });
+    }
     if (invitation.response_status !== "pending") {
       await connection.rollback();
       return res.status(409).json({
@@ -869,7 +952,9 @@ const resendRepositoryInvitation = async (req, res) => {
 
   try {
     const [rows] = await db.promise().execute(
-      `SELECT ri.id, ri.email, r.name AS repository_name, u.name AS inviter_name
+      `SELECT ri.id, ri.email, r.name AS repository_name,
+              r.description AS repository_description, r.domain,
+              u.name AS inviter_name
        FROM repository_invitations ri
        INNER JOIN repositories r ON r.id = ri.repository_id
        INNER JOIN users u ON u.id = ri.inviter_id
@@ -901,6 +986,8 @@ const resendRepositoryInvitation = async (req, res) => {
         token,
         email: rows[0].email,
         repositoryName: rows[0].repository_name,
+        repositoryDomain: rows[0].domain,
+        repositoryDescription: rows[0].repository_description,
         inviterName: rows[0].inviter_name,
       });
       await db
@@ -1133,12 +1220,15 @@ const getMyInvitations = async (req, res) => {
          ri.expires_at,
          ri.created_at,
          r.name  AS repository_name,
+         r.description AS repository_description,
          r.domain,
          r.research_type,
-         u.name  AS inviter_name
+         owner.name AS owner_name,
+         u.name AS inviter_name
        FROM repository_invitations ri
        INNER JOIN repositories r ON r.id = ri.repository_id
        INNER JOIN users        u ON u.id = ri.inviter_id
+       INNER JOIN users owner ON owner.id = r.owner_id
        WHERE ri.email = ?
          AND ri.response_status = 'pending'
          AND ri.expires_at > UTC_TIMESTAMP()
@@ -1177,7 +1267,8 @@ const respondToInvitation = async (req, res) => {
 
     // Fetch invitation + repo name + inviter info in one query
     const [[invitation]] = await connection.execute(
-      `SELECT ri.id, ri.repository_id, ri.email, ri.response_status, ri.inviter_id,
+      `SELECT ri.id, ri.repository_id, ri.email, ri.invited_user_id,
+              ri.response_status, ri.inviter_id,
               (ri.expires_at <= UTC_TIMESTAMP()) AS expired,
               r.name AS repository_name,
               r.owner_id,
@@ -1197,10 +1288,17 @@ const respondToInvitation = async (req, res) => {
 
     // Make sure this invitation actually belongs to the logged-in student
     const [[me]] = await connection.execute(
-      "SELECT name, email FROM users WHERE id = ?",
+      "SELECT name, email, role, email_verified, is_active FROM users WHERE id = ?",
       [req.user.id],
     );
-    if (!me || me.email.toLowerCase() !== invitation.email.toLowerCase()) {
+    if (
+      !me ||
+      me.role !== "student" ||
+      !me.email_verified ||
+      !me.is_active ||
+      (invitation.invited_user_id && invitation.invited_user_id !== req.user.id) ||
+      me.email.toLowerCase() !== invitation.email.toLowerCase()
+    ) {
       await connection.rollback();
       return res.status(403).json({
         message: "This invitation was not sent to your account.",

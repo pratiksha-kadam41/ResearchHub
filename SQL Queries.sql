@@ -16,6 +16,12 @@ CREATE TABLE users (
 
     course VARCHAR(100) NULL,
 
+    email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    email_verification_token_hash CHAR(64) NULL,
+    email_verification_expires_at DATETIME NULL,
+    email_verification_attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
+
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 -- ----------------------------------------

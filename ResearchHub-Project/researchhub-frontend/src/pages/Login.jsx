@@ -64,6 +64,8 @@ export const Login = () => {
   const [selectedRole, setSelectedRole] = useState("student");
   const [loading, setLoading] = useState(false);
   const [loginError, setLoginError] = useState("");
+  const [verificationEmail, setVerificationEmail] = useState("");
+  const [resendingVerification, setResendingVerification] = useState(false);
 
   const {
     register,
@@ -84,6 +86,7 @@ export const Login = () => {
   const onSubmit = async (data) => {
 
     setLoginError("");
+    setVerificationEmail("");
     setLoading(true);
 
     try {
@@ -115,6 +118,11 @@ export const Login = () => {
 
       // Handle backend errors
       if (!response.ok) {
+        if (result.code === "EMAIL_NOT_VERIFIED") {
+          setVerificationEmail(result.email || data.email);
+          setLoginError(result.message || "Verify your email address before signing in.");
+          return;
+        }
         throw new Error(result.message || "Unable to sign in");
       }
 
@@ -138,7 +146,7 @@ export const Login = () => {
       const returnTo = location.state?.returnTo;
       const invitationPath =
         typeof returnTo === "string" &&
-        /^\/invitations\/(?:accept\/[a-f\d]{64}|respond\/[a-f\d]{64}\/accept)$/i.test(returnTo)
+        /^\/invitations\/(?:accept\/[a-f\d]{64}|respond\/[a-f\d]{64}\/(?:accept|reject))$/i.test(returnTo)
           ? returnTo
           : null;
 
@@ -165,6 +173,31 @@ export const Login = () => {
     }
   };
 
+  const resendVerification = async () => {
+    setResendingVerification(true);
+    setLoginError("");
+    try {
+      const response = await fetch("/api/auth/resend-verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: verificationEmail }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "Unable to send a verification code.");
+      navigate("/verify-email", {
+        state: {
+          email: verificationEmail,
+          notice: result.message,
+          verificationEmailSent: true,
+          returnTo: location.state?.returnTo,
+        },
+      });
+    } catch (error) {
+      setLoginError(error.message || "Unable to send a verification code.");
+    } finally {
+      setResendingVerification(false);
+    }
+  };
 
   return (
 
@@ -1373,6 +1406,18 @@ export const Login = () => {
 
             )}
 
+            {verificationEmail && (
+              <button
+                type="button"
+                onClick={resendVerification}
+                disabled={resendingVerification}
+                className="w-full rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100 disabled:opacity-60"
+              >
+                {resendingVerification
+                  ? "Sending verification code…"
+                  : `Send verification code to ${verificationEmail}`}
+              </button>
+            )}
 
             {/* REMEMBER ME */}
 
@@ -1481,65 +1526,6 @@ export const Login = () => {
             </button>
 
           </form>
-
-
-          {/* =================================================
-              DIVIDER
-          ================================================= */}
-
-          <div className="flex items-center gap-4 my-6">
-
-            <div className="h-px flex-1 bg-slate-200" />
-
-            <span className="text-xs text-slate-400">
-              or
-            </span>
-
-            <div className="h-px flex-1 bg-slate-200" />
-
-          </div>
-
-
-          {/* =================================================
-              GOOGLE
-          ================================================= */}
-
-          <button
-            type="button"
-            className="
-              w-full
-              h-13
-              min-h-[52px]
-              flex
-              items-center
-              justify-center
-              gap-3
-              rounded-xl
-              border
-              border-slate-200
-              bg-white
-              text-sm
-              font-semibold
-              text-slate-700
-              hover:bg-slate-50
-              hover:border-slate-300
-              transition-all
-            "
-          >
-
-            <span
-              className="
-                text-xl
-                font-bold
-                text-[#4285F4]
-              "
-            >
-              G
-            </span>
-
-            Continue with Google
-
-          </button>
 
 
           {/* =================================================

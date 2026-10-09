@@ -68,6 +68,8 @@ export const DashboardFaculty = () => {
   const [rejectionReason, setRejectionReason] = React.useState("");
   const [requestError, setRequestError] = React.useState("");
   const [isRejecting, setIsRejecting] = React.useState(false);
+  const [publishingResultId, setPublishingResultId] = React.useState(null);
+  const [resultsPublishError, setResultsPublishError] = React.useState("");
 
   /* notifications */
   const [notifications, setNotifications] = React.useState([]);
@@ -128,6 +130,30 @@ export const DashboardFaculty = () => {
 
   /* ── handlers ── */
   const handleLogout = () => { logout(); navigate("/login"); };
+
+  const handlePublishResults = async (repositoryId) => {
+    if (!token) return;
+    setPublishingResultId(repositoryId);
+    setResultsPublishError("");
+    try {
+      const response = await fetch(`/api/repositories/${repositoryId}/results/publish`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "Unable to publish project results.");
+      setDashboard((current) => ({
+        ...current,
+        projects: current.projects.map((project) => Number(project.id) === Number(repositoryId)
+          ? { ...project, results_published_at: new Date().toISOString(), results_ready: false }
+          : project),
+      }));
+    } catch (publishError) {
+      setResultsPublishError(publishError.message || "Unable to publish project results.");
+    } finally {
+      setPublishingResultId(null);
+    }
+  };
 
   const handleRequest = async (requestId, status, reason = "") => {
     if (!token) return;
@@ -198,6 +224,9 @@ export const DashboardFaculty = () => {
   const requestHistory = requests.filter((r) => r.status !== "PENDING");
   const summary = dashboard?.summary || {};
   const projects = dashboard?.projects || [];
+  const pendingReviews = dashboard?.pendingReviews || [];
+  const recentSubmissions = dashboard?.recentSubmissions || [];
+  const recentFeedback = dashboard?.recentFeedback || [];
   const pageTitle = activeSection === "history"
     ? "Request history"
     : activeSection === "requests"
@@ -432,6 +461,87 @@ export const DashboardFaculty = () => {
           </div>
         )}
 
+        {activeSection === "dashboard" && (
+          <div className="mt-6 grid gap-5 xl:grid-cols-2">
+            <section className="rounded-2xl border border-amber-200 bg-white p-5 shadow-sm lg:p-6">
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <h2 className="font-bold text-[#102A63]">Pending reviews</h2>
+                  <p className="mt-1 text-xs text-slate-500">Latest project submissions awaiting your review.</p>
+                </div>
+                <span className="rounded-xl bg-amber-50 p-2 text-amber-700"><ClipboardCheck size={18} /></span>
+              </div>
+              {pendingReviews.length === 0 ? (
+                <p className="rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">No submissions are waiting for review.</p>
+              ) : (
+                <div className="space-y-3">
+                  {pendingReviews.map((submission) => (
+                    <article key={submission.submission_id} className="rounded-xl border border-slate-200 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <h3 className="text-sm font-bold text-slate-800">{submission.project_name}</h3>
+                          <p className="mt-1 text-xs text-slate-600">
+                            M{submission.milestone_number}: {submission.milestone_title}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Group: {submission.group_members || submission.submitted_by_name}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Submitted by {submission.submitted_by_name} · {new Date(submission.submitted_at).toLocaleString()}
+                          </p>
+                        </div>
+                        <Link
+                          to={`/repository/${submission.repository_id}?tab=submissions&submission=${submission.submission_id}`}
+                          className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
+                        >
+                          Review submission
+                        </Link>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <div className="space-y-5">
+              <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:p-6">
+                <h2 className="font-bold text-[#102A63]">Recent submissions</h2>
+                <div className="mt-3 space-y-2">
+                  {recentSubmissions.length === 0 ? (
+                    <p className="text-sm text-slate-500">No submissions yet.</p>
+                  ) : recentSubmissions.map((submission) => (
+                    <Link
+                      key={submission.submission_id}
+                      to={`/repository/${submission.repository_id}?tab=submissions&submission=${submission.submission_id}`}
+                      className="block rounded-lg border border-slate-100 p-3 hover:bg-blue-50/50"
+                    >
+                      <span className="block text-xs font-bold text-slate-800">{submission.project_name} · M{submission.milestone_number}: {submission.milestone_title}</span>
+                      <span className="mt-1 block text-[11px] text-slate-500">{submission.submitted_by_name} · {submission.status.replaceAll("_", " ")}</span>
+                    </Link>
+                  ))}
+                </div>
+              </section>
+              <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:p-6">
+                <h2 className="font-bold text-[#102A63]">Recent feedback</h2>
+                <div className="mt-3 space-y-2">
+                  {recentFeedback.length === 0 ? (
+                    <p className="text-sm text-slate-500">No faculty feedback yet.</p>
+                  ) : recentFeedback.map((review) => (
+                    <Link
+                      key={review.review_id}
+                      to={`/repository/${review.repository_id}?tab=submissions`}
+                      className="block rounded-lg border border-slate-100 p-3 hover:bg-blue-50/50"
+                    >
+                      <span className="block text-xs font-bold text-slate-800">{review.project_name} · M{review.milestone_number}: {review.milestone_title}</span>
+                      <span className="mt-1 block text-[11px] text-slate-500">{review.submitted_by_name} · {review.decision.replaceAll("_", " ")}</span>
+                    </Link>
+                  ))}
+                </div>
+              </section>
+            </div>
+          </div>
+        )}
+
         {/* ── Pending guidance requests ── */}
         {activeSection === "requests" && (
           <section className="mt-7 rounded-2xl border border-amber-200 bg-white p-5 shadow-sm lg:p-6">
@@ -542,7 +652,15 @@ export const DashboardFaculty = () => {
           ) : (
             <div className="mt-5 grid gap-3 md:grid-cols-2">
               {projects.map((project) => (
-                <article key={project.id} className="rounded-xl border border-slate-200 p-4">
+                <article
+                  key={project.id}
+                  className="rounded-xl border border-slate-200 p-4 transition hover:border-blue-300 hover:bg-blue-50/30"
+                >
+                  <Link
+                    to={`/repository/${project.id}`}
+                    aria-label={`Open workspace for ${project.name}`}
+                    className="block rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <h3 className="truncate text-sm font-bold text-slate-800">{project.name}</h3>
@@ -561,10 +679,45 @@ export const DashboardFaculty = () => {
                       <p className="text-slate-400">Completion</p>
                       <p className="mt-1 font-semibold text-slate-700">{project.completion_percentage}%</p>
                     </div>
+                    <div>
+                      <p className="text-slate-400">Milestones</p>
+                      <p className="mt-1 font-semibold text-slate-700">{project.milestone_count}</p>
+                    </div>
+                  </div>
+                  </Link>
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
+                    <span className={`text-xs font-semibold ${project.results_published_at ? "text-emerald-700" : "text-slate-500"}`}>
+                      {project.results_published_at
+                        ? "Results published"
+                        : project.results_ready
+                          ? "All milestones evaluated"
+                          : "Results pending milestone completion"}
+                    </span>
+                    <div className="flex gap-2">
+                      <Link
+                        to={`/repository/${project.id}?tab=results`}
+                        className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        View results
+                      </Link>
+                      {project.results_ready && !project.results_published_at && (
+                        <button
+                          type="button"
+                          disabled={publishingResultId === project.id}
+                          onClick={() => handlePublishResults(project.id)}
+                          className="rounded-lg bg-blue-700 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-800 disabled:opacity-60"
+                        >
+                          {publishingResultId === project.id ? "Publishing…" : "Publish result"}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </article>
               ))}
             </div>
+          )}
+          {resultsPublishError && (
+            <p role="alert" className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{resultsPublishError}</p>
           )}
         </section>
         )}

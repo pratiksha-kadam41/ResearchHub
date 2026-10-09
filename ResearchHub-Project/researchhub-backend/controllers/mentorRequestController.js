@@ -2,7 +2,6 @@ const db = require("../config/db");
 const {
   createNotifications,
   getRepositoryMemberIds,
-  getRepositoryMembership,
   parsePositiveId,
 } = require("../services/repositoryAccess");
 
@@ -15,34 +14,73 @@ const createMentorRequest = async (req, res) => {
     return res.status(422).json({ message: "Please provide a valid project, professor, and request message." });
   }
 
+  let connection;
   try {
-    const membership = await getRepositoryMembership(repositoryId, req.user.id);
-    if (!membership) {
-      return res.status(404).json({ message: "Project not found or you are not a member." });
-    }
-
-    const [[faculty]] = await db.promise().execute(
-      "SELECT id, name FROM users WHERE id = ? AND role = 'faculty'",
-      [facultyId],
+    connection = await db.promise().getConnection();
+    await connection.beginTransaction();
+    const [[project]] = await connection.execute(
+      `SELECT r.id, r.name, r.owner_id, r.research_type, owner.name AS owner_name
+       FROM repositories r
+       INNER JOIN users owner ON owner.id = r.owner_id
+       WHERE r.id = ? AND r.owner_id = ?
+       FOR UPDATE`,
+      [repositoryId, req.user.id],
     );
-    if (!faculty) return res.status(404).json({ message: "Professor not found." });
-
-    const [[existing]] = await db.promise().execute(
-      `SELECT id, status FROM mentor_requests
-       WHERE repository_id = ? AND faculty_id = ?
-         AND status IN ('PENDING', 'ACCEPTED')
-       LIMIT 1`,
-      [repositoryId, facultyId],
-    );
-    if (existing) {
-      return res.status(409).json({
-        message: existing.status === "ACCEPTED"
-          ? "This professor is already assigned to the project."
-          : "A guidance request to this professor is already pending.",
+    if (!project) {
+      await connection.rollback();
+      return res.status(404).json({
+        message: "Only the project owner can request faculty guidance for this project.",
       });
     }
 
-    const [result] = await db.promise().execute(
+    if (project.research_type === "group") {
+      const [[groupState]] = await connection.execute(
+        `SELECT
+           (SELECT COUNT(*) FROM repository_invitations
+            WHERE repository_id = ? AND response_status = 'pending'
+              AND expires_at > UTC_TIMESTAMP()) AS pending_invitations,
+           (SELECT COUNT(*) FROM repository_members
+            WHERE repository_id = ? AND member_role = 'member') AS accepted_members`,
+        [repositoryId, repositoryId],
+      );
+      if (Number(groupState.pending_invitations) > 0 || Number(groupState.accepted_members) === 0) {
+        await connection.rollback();
+        return res.status(409).json({
+          message: "Finalize the group first: at least one invitee must accept and all active invitations must be resolved before requesting faculty guidance.",
+        });
+      }
+    }
+
+    const [[faculty]] = await connection.execute(
+      `SELECT id, name
+       FROM users
+       WHERE id = ? AND role = 'faculty' AND is_active = TRUE
+         AND email_verified = TRUE
+       FOR UPDATE`,
+      [facultyId],
+    );
+    if (!faculty) {
+      await connection.rollback();
+      return res.status(404).json({ message: "Active faculty account not found." });
+    }
+
+    const [[existing]] = await connection.execute(
+      `SELECT id, faculty_id, status FROM mentor_requests
+       WHERE repository_id = ? AND status IN ('PENDING', 'ACCEPTED')
+       LIMIT 1
+       FOR UPDATE`,
+      [repositoryId],
+    );
+    if (existing) {
+      await connection.rollback();
+      return res.status(409).json({
+        message: existing.status === "ACCEPTED"
+          ? "This project already has an active faculty mentor."
+          : "A guidance request is already pending for this project.",
+      });
+    }
+
+    const [result] = await connection.execute(
       `INSERT INTO mentor_requests (repository_id, faculty_id, requested_by, message)
        VALUES (?, ?, ?, ?)`,
       [repositoryId, facultyId, req.user.id, message || null],
@@ -51,17 +89,21 @@ const createMentorRequest = async (req, res) => {
     await createNotifications([facultyId], {
       type: "MENTOR_REQUEST",
       title: "New guidance request",
-      message: `${membership.name} has requested your research guidance.`,
+      message: `${project.owner_name} requested your guidance for "${project.name}".`,
       linkUrl: "/dashboard/faculty",
-    });
+    }, connection);
+    await connection.commit();
 
     return res.status(201).json({
       message: "Guidance request sent.",
       mentorRequestId: result.insertId,
     });
   } catch (error) {
+    if (connection) await connection.rollback();
     console.error("Mentor request creation failed:", error);
     return res.status(500).json({ message: "Unable to send guidance request." });
+  } finally {
+    if (connection) connection.release();
   }
 };
 
@@ -97,9 +139,9 @@ const getMentorRequests = async (req, res) => {
          INNER JOIN repositories r ON r.id = mr.repository_id
          INNER JOIN users f ON f.id = mr.faculty_id
          LEFT JOIN faculty_profiles fp ON fp.user_id = f.id
-         WHERE rm.user_id = ?
+         WHERE rm.user_id = ? AND r.owner_id = ?
          ORDER BY mr.created_at DESC`,
-        [req.user.id],
+        [req.user.id, req.user.id],
       );
     }
 
@@ -125,14 +167,30 @@ const updateMentorRequest = async (req, res) => {
     });
   }
 
-  const connection = await db.promise().getConnection();
+  let connection;
   try {
+    connection = await db.promise().getConnection();
     await connection.beginTransaction();
+    const [[requestReference]] = await connection.execute(
+      "SELECT repository_id FROM mentor_requests WHERE id = ?",
+      [requestId],
+    );
+    if (!requestReference) {
+      await connection.rollback();
+      return res.status(404).json({ message: "Guidance request not found." });
+    }
+    await connection.execute(
+      "SELECT id FROM repositories WHERE id = ? FOR UPDATE",
+      [requestReference.repository_id],
+    );
     const [rows] = await connection.execute(
       `SELECT mr.id, mr.repository_id, mr.faculty_id, mr.requested_by, mr.status,
-              r.name AS repository_name
+              r.name AS repository_name, r.owner_id,
+              faculty.name AS faculty_name, requester.name AS requester_name
        FROM mentor_requests mr
        INNER JOIN repositories r ON r.id = mr.repository_id
+       INNER JOIN users faculty ON faculty.id = mr.faculty_id
+       INNER JOIN users requester ON requester.id = mr.requested_by
        WHERE mr.id = ? FOR UPDATE`,
       [requestId],
     );
@@ -178,24 +236,34 @@ const updateMentorRequest = async (req, res) => {
       [status, status === "REJECTED" ? rejectionReason : null, requestId],
     );
 
-    const memberIds = await getRepositoryMemberIds(request.repository_id, connection);
-    await createNotifications(memberIds, {
+    const notificationRecipients = status === "REJECTED"
+      ? [request.owner_id]
+      : status === "CANCELLED"
+        ? [request.faculty_id]
+        : await getRepositoryMemberIds(request.repository_id, connection);
+    await createNotifications(notificationRecipients, {
       type: "MENTOR_REQUEST_UPDATED",
-      title: "Guidance request updated",
+      title: status === "ACCEPTED"
+        ? "Faculty guidance accepted"
+        : status === "REJECTED"
+          ? "Faculty guidance request rejected"
+          : "Guidance request cancelled",
       message: status === "REJECTED"
-        ? `${request.repository_name}: your guidance request was rejected. Reason: ${rejectionReason}`
-        : `${request.repository_name}: your guidance request was ${status.toLowerCase()}.`,
+        ? `${request.faculty_name} rejected your guidance request for "${request.repository_name}".${rejectionReason ? ` Reason: ${rejectionReason}` : ""}`
+        : status === "CANCELLED"
+          ? `${request.requester_name} cancelled the guidance request for "${request.repository_name}".`
+          : `${request.faculty_name} accepted your guidance request for "${request.repository_name}".`,
       linkUrl: `/repository/${request.repository_id}`,
     }, connection);
     await connection.commit();
 
     return res.status(200).json({ message: `Guidance request ${status.toLowerCase()}.` });
   } catch (error) {
-    await connection.rollback();
+    if (connection) await connection.rollback();
     console.error("Mentor request update failed:", error);
     return res.status(500).json({ message: "Unable to update guidance request." });
   } finally {
-    connection.release();
+    if (connection) connection.release();
   }
 };
 

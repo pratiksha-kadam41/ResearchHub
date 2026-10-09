@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS repository_invitations (
     id INT AUTO_INCREMENT PRIMARY KEY,
     repository_id INT NOT NULL,
     inviter_id INT NOT NULL,
+    invited_user_id INT NULL,
     email VARCHAR(150) NOT NULL,
     token_hash CHAR(64) NOT NULL UNIQUE,
     delivery_status ENUM('pending', 'sent', 'failed') NOT NULL DEFAULT 'pending',
@@ -33,12 +34,17 @@ CREATE TABLE IF NOT EXISTS repository_invitations (
     UNIQUE KEY unique_repository_invitation (repository_id, email),
     INDEX idx_repository_invitations_token (token_hash),
     INDEX idx_repository_invitations_inviter (inviter_id),
+    INDEX idx_repository_invitations_invited_user (invited_user_id),
     CONSTRAINT fk_repository_invitations_repository
         FOREIGN KEY (repository_id)
         REFERENCES repositories(id)
         ON DELETE CASCADE,
     CONSTRAINT fk_repository_invitations_inviter
         FOREIGN KEY (inviter_id)
+        REFERENCES users(id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_repository_invitations_invited_user
+        FOREIGN KEY (invited_user_id)
         REFERENCES users(id)
         ON DELETE CASCADE
 );

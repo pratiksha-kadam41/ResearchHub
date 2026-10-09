@@ -210,9 +210,12 @@ export const Register = () => {
         );
       }
 
-      // Redirect to login so the user signs in with the new account.
-      navigate("/login", {
+      navigate("/verify-email", {
         state: {
+          email: data.email,
+          notice: result.message,
+          verificationEmailSent: result.verificationEmailSent,
+          registrationPending: true,
           returnTo: location.state?.returnTo,
           invitedEmail: location.state?.invitedEmail,
         },

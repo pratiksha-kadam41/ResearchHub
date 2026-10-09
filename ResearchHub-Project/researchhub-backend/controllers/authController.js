@@ -1,29 +1,42 @@
 const db = require("../config/db");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const { createHash, randomBytes } = require("node:crypto");
-const nodemailer = require("nodemailer");
+const { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } = require("node:crypto");
 const { getJwtSecret } = require("../config/security");
+const { getMailTransport } = require("../utils/mailer");
 
 const ROLES = ["student", "faculty"];
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_VERIFICATION_VALIDITY_MINUTES = 10;
+const escapeHtml = (value) =>
+  value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[character]);
 
 const normaliseText = (value) =>
   typeof value === "string" ? value.trim() : "";
 
 const hashToken = (token) => createHash("sha256").update(token).digest("hex");
+const hashVerificationCode = (email, code) =>
+  createHmac("sha256", getJwtSecret())
+    .update(`${email}:${code}`)
+    .digest("hex");
 
-const getPasswordResetTransport = () => {
-  const { SMTP_USER, SMTP_PASS, SMTP_HOST = "smtp.gmail.com", SMTP_PORT = "587" } = process.env;
-  if (!SMTP_USER || !SMTP_PASS) return null;
-  const port = Number(SMTP_PORT);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
-  return nodemailer.createTransport({
-    host: SMTP_HOST,
-    port,
-    secure: process.env.SMTP_SECURE ? process.env.SMTP_SECURE === "true" : port === 465,
-    auth: { user: SMTP_USER, pass: SMTP_PASS },
+const sendVerificationEmail = async (user, code) => {
+  const transporter = getMailTransport();
+  if (!transporter) return false;
+  await transporter.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to: user.email,
+    subject: "Your ResearchHub email verification code",
+    text: `Hello ${user.name},\n\nYour ResearchHub email verification code is ${code}.\n\nIt expires in ${EMAIL_VERIFICATION_VALIDITY_MINUTES} minutes. If you did not create this account, you can ignore this email.`,
+    html: `<p>Hello ${escapeHtml(user.name)},</p><p>Your ResearchHub email verification code is:</p><p style="font-size:28px;font-weight:bold;letter-spacing:8px">${code}</p><p>This code expires in ${EMAIL_VERIFICATION_VALIDITY_MINUTES} minutes. If you did not create this account, you can ignore this email.</p>`,
   });
+  return true;
 };
 
 // =====================================================
@@ -76,66 +89,53 @@ const registerUser = async (req, res) => {
     return res.status(422).json({ message: "Course is too long." });
   }
 
-  // 3. Check whether email already exists
-  const checkEmailSql = `
-    SELECT id
-    FROM users
-    WHERE email = ?
-  `;
-
-  db.query(checkEmailSql, [normalizedEmail], async (err, results) => {
-    if (err) {
-      console.error(err);
-
-      return res.status(500).json({
-        message: "Database error",
-      });
-    }
-
-    // Email already exists
-    if (results.length > 0) {
-      return res.status(409).json({
-        message: "An account with this email already exists",
-      });
-    }
-
-    // 4. Hash password
-    let hashedPassword;
-    try {
-      hashedPassword = await bcrypt.hash(password, 12);
-    } catch (hashError) {
-      console.error("Password hashing failed:", hashError);
-      return res.status(500).json({ message: "Unable to create account" });
-    }
-
-    // 5. Insert user
-    const insertSql = `
-      INSERT INTO users
-      (name, email, password, role, institution, course)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `;
-
+  try {
+    const hashedPassword = await bcrypt.hash(password, 12);
+    const verificationCode = String(randomInt(100000, 1000000));
     const userCourse = role === "student" ? normalizedCourse : null;
-
-    db.query(
-      insertSql,
-      [normalizedName, normalizedEmail, hashedPassword, role, normalizedInstitution, userCourse],
-      (err, result) => {
-        if (err) {
-          console.error(err);
-
-          return res.status(500).json({
-            message: "Unable to create account",
-          });
-        }
-
-        return res.status(201).json({
-          message: "Registration successful",
-          userId: result.insertId,
-        });
-      },
+    const [result] = await db.promise().execute(
+      `INSERT INTO users
+        (name, email, password, role, institution, course, email_verified,
+         is_active, email_verification_token_hash, email_verification_expires_at,
+         email_verification_attempts)
+       VALUES (?, ?, ?, ?, ?, ?, FALSE, TRUE, ?,
+               DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? MINUTE), 0)`,
+      [
+        normalizedName,
+        normalizedEmail,
+        hashedPassword,
+        role,
+        normalizedInstitution,
+        userCourse,
+        hashVerificationCode(normalizedEmail, verificationCode),
+        EMAIL_VERIFICATION_VALIDITY_MINUTES,
+      ],
     );
-  });
+
+    let verificationEmailSent = false;
+    try {
+      verificationEmailSent = await sendVerificationEmail(
+        { name: normalizedName, email: normalizedEmail },
+        verificationCode,
+      );
+    } catch (emailError) {
+      console.error("Registration verification email failed:", emailError);
+    }
+
+    return res.status(202).json({
+      message: verificationEmailSent
+        ? `Your account is pending email verification. Enter the six-digit code sent to your email within ${EMAIL_VERIFICATION_VALIDITY_MINUTES} minutes to complete registration.`
+        : "Your account is pending email verification. We could not send a code yet; request one from this screen to complete registration.",
+      userId: result.insertId,
+      verificationEmailSent,
+    });
+  } catch (error) {
+    if (error.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({ message: "An account with this email already exists." });
+    }
+    console.error("Registration failed:", error);
+    return res.status(500).json({ message: "Unable to create account." });
+  }
 };
 
 // =====================================================
@@ -194,6 +194,20 @@ const loginUser = async (req, res) => {
       });
     }
 
+    if (!user.is_active) {
+      return res.status(403).json({
+        code: "ACCOUNT_INACTIVE",
+        message: "This account is inactive. Contact ResearchHub support for help.",
+      });
+    }
+    if (!user.email_verified) {
+      return res.status(403).json({
+        code: "EMAIL_NOT_VERIFIED",
+        email: user.email,
+        message: "Verify your email address before signing in.",
+      });
+    }
+
     // 6. Create JWT token
     let token;
     try {
@@ -230,6 +244,121 @@ const loginUser = async (req, res) => {
   });
 };
 
+const verifyEmail = async (req, res) => {
+  const email = normaliseText(req.body.email).toLowerCase();
+  const code = typeof req.body.code === "string" ? req.body.code.trim() : "";
+  if (!EMAIL_PATTERN.test(email) || !/^\d{6}$/.test(code)) {
+    return res.status(422).json({ message: "Enter a valid email address and six-digit verification code." });
+  }
+
+  const connection = await db.promise().getConnection();
+  try {
+    await connection.beginTransaction();
+    const [[user]] = await connection.execute(
+      `SELECT id, email_verification_token_hash, email_verification_attempts,
+              (email_verification_expires_at <= UTC_TIMESTAMP()) AS expired
+       FROM users
+       WHERE email = ? AND email_verified = FALSE AND is_active = TRUE
+       FOR UPDATE`,
+      [email],
+    );
+    if (!user || !user.email_verification_token_hash) {
+      await connection.rollback();
+      return res.status(400).json({ message: "No active verification code was found. Request a new code." });
+    }
+    if (user.email_verification_attempts >= 5) {
+      await connection.rollback();
+      return res.status(429).json({ message: "Too many incorrect codes. Request a new verification code." });
+    }
+    if (user.expired) {
+      await connection.rollback();
+      return res.status(400).json({ message: "This verification code has expired. Request a new code." });
+    }
+
+    const expectedHash = Buffer.from(user.email_verification_token_hash, "hex");
+    const suppliedHash = Buffer.from(hashVerificationCode(email, code), "hex");
+    if (
+      expectedHash.length !== suppliedHash.length ||
+      !timingSafeEqual(expectedHash, suppliedHash)
+    ) {
+      const attempts = user.email_verification_attempts + 1;
+      await connection.execute(
+        "UPDATE users SET email_verification_attempts = ? WHERE id = ?",
+        [attempts, user.id],
+      );
+      await connection.commit();
+      return res.status(attempts >= 5 ? 429 : 400).json({
+        message: attempts >= 5
+          ? "Too many incorrect codes. Request a new verification code."
+          : `That code is incorrect. ${5 - attempts} attempt${5 - attempts === 1 ? "" : "s"} remaining.`,
+      });
+    }
+
+    await connection.execute(
+      `UPDATE users
+       SET email_verified = TRUE,
+           email_verification_token_hash = NULL,
+           email_verification_expires_at = NULL,
+           email_verification_attempts = 0
+       WHERE id = ?`,
+      [user.id],
+    );
+    await connection.commit();
+    return res.status(200).json({ message: "Email verified. Registration is complete; you can now sign in." });
+  } catch (error) {
+    await connection.rollback();
+    console.error("Email verification failed:", error);
+    return res.status(500).json({ message: "Unable to verify your email address." });
+  } finally {
+    connection.release();
+  }
+};
+
+const resendEmailVerification = async (req, res) => {
+  const email = normaliseText(req.body.email).toLowerCase();
+  if (!EMAIL_PATTERN.test(email)) {
+    return res.status(422).json({ message: "Please provide a valid email address." });
+  }
+
+  try {
+    const [[user]] = await db.promise().execute(
+      `SELECT id, name, email
+       FROM users
+       WHERE email = ? AND email_verified = FALSE AND is_active = TRUE`,
+      [email],
+    );
+    if (!user) {
+      return res.status(202).json({
+        message: `If this active account needs verification, a six-digit code has been sent. It expires in ${EMAIL_VERIFICATION_VALIDITY_MINUTES} minutes.`,
+      });
+    }
+
+    const code = String(randomInt(100000, 1000000));
+    await db.promise().execute(
+      `UPDATE users
+       SET email_verification_token_hash = ?,
+           email_verification_expires_at = DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? MINUTE),
+           email_verification_attempts = 0
+       WHERE id = ? AND email_verified = FALSE AND is_active = TRUE`,
+      [hashVerificationCode(email, code), EMAIL_VERIFICATION_VALIDITY_MINUTES, user.id],
+    );
+    const emailSent = await sendVerificationEmail(user, code);
+    if (!emailSent) {
+      return res.status(503).json({
+        message: "Verification email is not configured. Set SMTP_USER and SMTP_PASS on the server, then try again.",
+      });
+    }
+    return res.status(202).json({
+      message: `If this active account needs verification, a six-digit code has been sent. It expires in ${EMAIL_VERIFICATION_VALIDITY_MINUTES} minutes.`,
+    });
+  } catch (error) {
+    console.error("Verification email resend failed:", error);
+    return res.status(503).json({
+      message: "Unable to send a verification email. Check the email configuration and try again.",
+    });
+  }
+};
+
 const requestPasswordReset = async (req, res) => {
   const email = normaliseText(req.body.email).toLowerCase();
   if (!EMAIL_PATTERN.test(email)) {
@@ -246,7 +375,7 @@ const requestPasswordReset = async (req, res) => {
       return res.status(202).json({ message: "If that account exists, a reset link has been sent." });
     }
 
-    const transporter = getPasswordResetTransport();
+    const transporter = getMailTransport();
     if (!transporter) {
       return res.status(503).json({
         message: "Password reset email is not configured on this server.",
@@ -320,6 +449,8 @@ const resetPassword = async (req, res) => {
 module.exports = {
   registerUser,
   loginUser,
+  verifyEmail,
+  resendEmailVerification,
   requestPasswordReset,
   resetPassword,
 };

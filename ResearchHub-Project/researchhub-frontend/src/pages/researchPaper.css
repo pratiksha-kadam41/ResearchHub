@@ -1,0 +1,163 @@
+.paper-editor-content {
+  min-height: 280px;
+  padding: 1.25rem 1.5rem;
+  outline: none;
+  color: #1e293b;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 0.98rem;
+  line-height: 1.85;
+}
+
+.paper-editor-content > * + * {
+  margin-top: 0.8em;
+}
+
+.paper-editor-content h1,
+.paper-editor-content h2,
+.paper-editor-content h3 {
+  margin-top: 1.2em;
+  color: #102a63;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.paper-editor-content h1 {
+  font-size: 1.5rem;
+}
+
+.paper-editor-content h2 {
+  font-size: 1.25rem;
+}
+
+.paper-editor-content h3 {
+  font-size: 1.1rem;
+}
+
+.paper-editor-content ul,
+.paper-editor-content ol {
+  padding-left: 1.6rem;
+}
+
+.paper-editor-content ul {
+  list-style: disc;
+}
+
+.paper-editor-content ol {
+  list-style: decimal;
+}
+
+.paper-editor-content a {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+
+.paper-editor-content table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.paper-editor-content th,
+.paper-editor-content td {
+  min-width: 5rem;
+  border: 1px solid #cbd5e1;
+  padding: 0.4rem 0.55rem;
+  vertical-align: top;
+}
+
+.paper-editor-content th {
+  background: #f1f5f9;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-weight: 700;
+}
+
+.paper-editor-readonly {
+  min-height: 0;
+  padding: 0;
+}
+
+.paper-preview-body .paper-editor-content {
+  padding: 0;
+  font-size: 0.95rem;
+  line-height: 1.8;
+}
+
+.paper-preview-body .paper-editor-content > * + * {
+  margin-top: 0.75em;
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 22mm 20mm;
+  }
+
+  html,
+  body {
+    width: auto !important;
+    height: auto !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  .paper-print-document,
+  .paper-print-document * {
+    visibility: visible !important;
+  }
+
+  .paper-print-document {
+    position: relative !important;
+    inset: auto !important;
+    display: block !important;
+    width: auto !important;
+    max-width: none !important;
+    min-height: 0 !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+    color: #111827 !important;
+    background: #fff !important;
+  }
+
+  .paper-print-document header {
+    break-after: avoid-page;
+  }
+
+  .paper-print-document section {
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+
+  .paper-print-document h2 {
+    break-after: avoid-page;
+    page-break-after: avoid;
+  }
+
+  .paper-print-document p,
+  .paper-print-document li {
+    orphans: 3;
+    widows: 3;
+  }
+
+  .paper-print-document table {
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+
+  .paper-print-document tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .paper-print-document a {
+    color: inherit !important;
+    text-decoration: none !important;
+  }
+}
